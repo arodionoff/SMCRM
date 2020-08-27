@@ -2,6 +2,8 @@
 
 The Implementation of the **SAS** code in the **R** programming language and Data Set for the book
 
+![](https://www.drvkumar.com/wp-content/uploads/2013/09/SMCRM2.png "Statistical Methods in Customer Relationship Management by V. Kumar, J. Andrew Peterson, 2012")
+
 #### ["Statistical Methods in Customer Relationship Management" 2012](http://www.drvkumar.com/statistical-methods-in-customer-relationship-management "V. Kumar, J. Andrew Peterson 'Statistical Methods in Customer Relationship Management', 1st Edition, Published: 2012") by *V. Kumar, J. Andrew Peterson*.
 
 **Publisher**: John Wiley & Sons; 1 Edition (August 7, 2012)
