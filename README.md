@@ -1,6 +1,6 @@
 ## Code and Dataset repository
 
-The Implementation of the **SAS** code in the **R** programming language and Data Set for the book
+The Implementation of the **SAS** code in the programming language **R** and Data Set for the book
 
 ![](https://www.drvkumar.com/wp-content/uploads/2013/09/SMCRM2.png "Statistical Methods in Customer Relationship Management by V. Kumar, J. Andrew Peterson, 2012")
 
@@ -28,4 +28,4 @@ Each analysis has a list of required R packages and enumerates the package versi
 
 There is no code for chapters 1-2 and 8-9.
 
-The Implementation of the **SAS** code in the **R** programming language by **[Alexander Rodionov](https://www.linkedin.com/in/alexandr-rodionov-b8239769)** in 2018.
+The Implementation of the **SAS** code in the programming language **R** by **[Alexander Rodionov](https://www.linkedin.com/in/alexandr-rodionov-b8239769)** in 2018.
