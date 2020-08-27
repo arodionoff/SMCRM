@@ -1,0 +1,791 @@
+---
+title: "Statistical Methods in Customer Relationship Management"
+subtitle: "Chapter 6. Customer Churn"
+author: "Alexander Rodionov"
+date: "27 июня 2018 г."
+output: 
+  html_document:
+    highlight: tango 
+    theme: readable
+    code_folding: hide
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 6.3
+    toc: yes
+    toc_float: no
+    number_sections: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 120)
+```
+
+Мы продолжаем рассматриваем в **R** примеры **SAS** на наборах данных из книги Kumar V., Petersen Andrew J. "Statistical Methods in Customer Relationship Management".
+
+# Глава 6. Отток потребителей
+
+В предыдущих главах основное внимание уделялось моделям, которые помогают приобретать наиболее прибыльных клиентов, сохраняя наиболее прибыльных клиентов и, наконец, балансируя маркетинговые ресурсы в рамках усилий по приобретению и удержанию, чтобы максимизировать прибыльность. Хотя конечная цель удержания клиентов заключается в том, чтобы не допустить, чтобы клиенты покидали текущего поставщика услуг, поскольку всегда будет возникать утомляемость клиентов. И этот отток клиентов может быть чрезвычайно дорогостоящим для фирм, которые не понимают, когда клиенты могут отказаться от сотрудничества или какие предупреждающие сигналы существуют, которые помогают объяснить, почему клиент может уйти в отток. Например, фирме придется тратить значительно больше, чтобы приобрести нового клиента, чем продолжать удерживать большинство клиентов в среднем. Таким образом, становится очень важно попытаться получить четкую картину процесса оттока клиентов и надлежащим образом управлять им.
+
+Наиболее эффективным способом управления оттоком клиентов является понимание причин или детерминант поведения клиентов, которые прогнозируют, когда клиенты, скорее всего, уйдут, и провести маркетинговые акции, чтобы побудить их остаться (учитывая, что им, вероятно, будет выгодно вернуться). В этой главе книги основное внимание будет уделено следующим двум вопросам:
+
+* Что является драйвером оттока клиента?
+
+* Учитывая, что клиент еще не покинул фирму, когда же клиент может прекратить отношения?
+
+В следующей главе авторы рассмотрим стратегии по возвращению клиентов с помощью рекламных акций или других стратегий, чтобы побудить клиентов оставаться на месте. Было проведено много исследований, которые были проведены, чтобы попытаться ответить на два ключевых вопроса, поставленных выше. 
+
+Как и в моделях привлечении и удержания клиентов, первым вопросом, на который нужно ответить, является вопрос о том, вступают ли клиенты фирмы в договорные и внедоговорные отношения. В большинстве случаев это определяет тип статистической модели, который необходимо использовать для получения информации о данных.
+
+## Данные для эмпирического примера
+
+Для всех эмпирических примеров в этой главе авторы предлагают набор данных под названием "`customerChurn`". Этот набор данных включает репрезентативную выборку из 500 клиентов из типичной фирмы B2B, где все клиенты одной и той же когорты. В этом случае когорта состоит из случайной выборки из 500 клиентов, которые одновременно совершили первую покупку в фирме. Набор данных предоставляет транзакционную и фирменную информацию для каждого клиента. Таким образом, таблица данных состоит из 500 клиентов * 14 переменных (15 полных столбцов):
+
+Имеются набор данных "`customerAcquisition`" о 500 потенциальных потребителей типичной B2B компании, содержащие 11 признаков:
+
+| Переменные      | Описание                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| Customer        | Номер потребителя (от 1 до 500) |
+| Duration        | Время в днях, когда компании была или продолжает быть клиентом, цензуированная до 730 дней |
+| Censor          | **1**, если клиент оставался в конце окна наблюдения, **0** в противном случае |
+| Avg_ret_exp     | Среднемесячные долларовые расходы на маркетинг по удержание клиента |
+| Avg_ret_exp_sq  | Квадрат среднемесячных долларовых расходов на маркетинг по удержание клиента |
+| Total_crossbuy  | Общее количество категорий товаров / услуг, приобретенных клиентом во всё его время жизни |
+| Total_freq      | Общее количество покупок клиента во всё его время жизни |
+| Total_freq_sq   | Квадрат общего количества покупок клиента во всё его время жизни |
+| Industry        | **1**, если клиент в секторе **B2B**, **0** в противном случае, т. е. **B2C** |
+| Revenue         | Годовой доход от продаж компании (млн долл.) |
+| Employees       | Количество сотрудников в компании |
+
+
+```{r Ch05: customer Churn - Data}
+library('tidyverse')
+library('caret')
+library('car')
+utils::data('customerChurn', package = 'SMCRM')
+
+# Check for Class Imbalances
+writeLines("Distribution Variable 'customerChurn' by Censor factor")
+customerChurn$censor %>%
+  factor() %>%
+    table() # %>%
+      # prop.test()
+
+```
+
+Следует отметить, что авторы решили избавиться от признака `First_Purchase`, которые зачастую оказавался незначимым в ряде моделей, рассмотренных в предыдущих главах. Однако присутствует признак `Censor`, который использовался в модели *Времени Ускореннного Отказа* (англ. "`Accelerated Failure Time (AFT) Model`") из **третьей главы**. Надо понимать, что данные в этой главе несколько другие, чем в наборе данных в третьей главы, поскольку теперь они содержат только данные по реальных клиентам и не включают потенциальных. При этом число клиентов сотрудничавших с фирмой два года больше, чем ушедших в отток.
+
+## Эмпирическая задача: Отток клиентов
+
+Один из многих критических вопросов, которые фирма должна ответить, связана с тем, может ли эта фирма предсказать, почему и когда клиент, вероятно, откажется от её услуг. В этой главе авторы рассматривают пример типичной фирмы B2B с контрактной базой со своими клиентами. В этом случае фирма действительно может наблюдать, когда клиент покидает базы данных. Тем не менее, мы наблюдаем весь срок службы каждого клиента в базе данных. Действительно, мы наблюдаем не перебрался ли клиент из фирмы в первые два года отношений (или 730 дней). Для всех клиентов, которые не перестали сотрудничать с фирмой, мы наблюдаем только срок службы с правостроннего цензуирования в 730 дней. Таким образом, в этом примере мы хотим смоделировать драйверы оттока клиентов, чтобы попытаться понять, существует ли разница между клиентами, которые уже покинули фирму, и клиентами, которые еще не покинули фирму. В конце этого примера авторы постараются сделать следующее:
+
+1. Определить драйверы оттока клиента.
+
+2. Предсказать ожидаемую продолжительность клиентов, которые еще не ушли в отток.
+
+3. Определить предиктивную точность модели.
+
+Информация, необходимая для этой модели, включает следующий список переменных:
+
+| Переменные      | Описание                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| **Зависимая переменная** |  |
+| Duration        | Время в днях, когда компании была или продолжает быть клиентом, цензуированная до 730 дней |
+| Censor          | **1**, если клиент оставался в конце окна наблюдения, **0** в противном случае |
+| **Предикторы**          |  |
+| Avg_ret_exp     | Среднемесячные долларовые расходы на маркетинг по удержание клиента |
+| Avg_ret_exp_sq  | Квадрат среднемесячных долларовых расходов на маркетинг по удержание клиента |
+| Total_crossbuy  | Общее количество категорий товаров / услуг, приобретенных клиентом во всё его время жизни |
+| Total_freq      | Общее количество покупок клиента во всё его время жизни |
+| Total_freq_sq   | Квадрат общего количества покупок клиента во всё его время жизни |
+| Industry        | **1**, если клиент в секторе **B2B**, **0** в противном случае, т. е. **B2C** |
+| Revenue         | Годовой доход от продаж компании (млн долл.) |
+| Employees       | Количество сотрудников в компании |
+
+В этом случае авторы используют `Duration` и `Censor` одновременно в качестве зависимых переменных, а остальные переменные - как независимые предикторы. Поскольку фактически наблюдаем отток клиента от фирмы, то можно выбрать порядок моделирования с наблюдаемой зависимой переменной. В случае, когда отношения между клиентом и фирмой были неконтрактными, нам пришлось бы моделировать вероятность оттока клиента как стохастического процесса (см. Эмпирический пример *продолжительности жизни* в **четверой главе**  для описания моделирования этого процесса). Однако авторы  рассмотрев несколько вариантов моделей прогнозирования оттока остановились на уже использовавшейся ими в **третьей главе** модели Времени Ускореннного Отказа (англ. "`Accelerated Failure Time (AFT) Model`"). В этом случае имеется следующее уравнение:
+
+$$ \displaystyle \large \ln(Duration) = X'\beta + \sigma \varepsilon. \hspace{.5 in} [1]$$
+
+где $\ln(Duration)$ - натуральный логарифм времени, в течение которого клиент сотрудничал с фирмой,
+
+$X'$ - матрица из 10 независимых переменных,
+
+$\beta$ - вектор коэффициентов,
+
+$\sigma$ - параметр масштаба, 
+
+$\varepsilon$ - случайные ошибки модели.
+
+Чтобы дать оценку функции выживания графическим методом и определить разницу между различными видами распределений полезно построить кривые Каплана—Мейера (англ. "`Kaplan–Meier Estimator`"). Для построения подобных кривых необходимо обратиться к важнейшему пакету в **R** по тематике анализа выживания -  [`survival`](http://cran.rstudio.com/web/packages/survival), а также специализированным графикам из пакета  [`survminer`](http://cran.rstudio.com/web/packages/survminer).
+
+#### KM Curve by Duration
+
+```{r Ch06 : Kaplan–Meier Curve - duration, warning=FALSE, out.width = "150%"}
+# survminer: Survival Analysis and Visualization
+# http://www.sthda.com/english/wiki/survival-analysis-basics & https://habr.com/post/348754/
+library('survival')
+library('survminer')
+fit <- survival::survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ 1, data = customerChurn)
+
+#  Graph of Kaplan–Meier Estimator
+ggsurvplot(fit, data = customerChurn, # survfit object with calculated statistics.
+           pval = TRUE,             # show p-value of log-rank test.
+           conf.int = TRUE,         # show confidence intervals for 
+                                    # point estimates of survival curves.
+           fontsize = 2,
+           xlim = c(0, max(customerChurn$duration)), 
+                                    # present narrower X axis, but not affect survival estimates.
+           xlab = "Time in days",   # customize X axis label.
+           break.time.by = 30,     # break X axis in time intervals by 30 days.
+           ggtheme = theme_light(), # customize plot and risk table with a theme.
+           risk.table = "abs_pct",   # to show both absolute number and percentage
+          risk.table.y.text.col = T,# colour risk table text annotations.
+          risk.table.height = 0.25, # the height of the risk table
+          risk.table.y.text = FALSE,# show bars instead of names in text annotations
+                                    # in legend of risk table.
+          surv.median.line = "hv"#,  # add the median survival pointer.
+          # legend.labs = 
+          #   c("B2C", "B2B")    # change legend labels.
+) 
+
+# # Plot of the Empirical Hazard function
+# plot(fit$n - fit$n.risk[-1], -diff(fit$surv), type="s", xlab="Time from the start of Contract",ylab=" h (time)")
+
+```
+
+Исходя из графика функции выживания можно предположить, что для описания переменной времени `Duration` из набора данных `customerChurn` может подходить одно из распределений после логарифмирования. В таблице под графиком приведены данные по *функции риска* (англ. `Hazard function`) - $h(t)$, т.е. вероятность того что клиент закончит сотрудничество в момент времени с момента наблюдения *t*, за некоторый промежуток времени. По сути это первая производная функции выживания $S(x) = (1 - F(x))$ со знаком минус.
+
+Для целей этого примера авторы выбрали оценку модели с **лог-нормальным распределением** в `Duration`, где оцененное распределение `Duration` может принимать разные формы (например, Вейбулла, лог-нормальное, экспоненциальное и другие распределения). Также обратите внимание на то, что мы не выбираем распределение ln (Distribution) или $\varepsilon$. Выбор распределения для всех моделей AFT всегда осуществляется исходя реальных данных из переменной времени, а не в преобразованной переменной или $\varepsion$.
+
+Когда мы вслед за авторами оцениваем модель *оттока* с лог-нормальным распределением, то получаем следующие результаты:
+
+```{r Ch06: Churn Models, warning=FALSE}
+# Censored Regression of Accelerated Failure Time (AFT) model on Time-to-Failure Data
+# https://stats.idre.ucla.edu/r/examples/asa/r-applied-survival-analysis-ch-1/
+
+library('survival')
+(Ch06.churn <- survreg(Surv(time = duration, event = (censor == 0), type = "right") ~ avg_ret_exp +
+                    avg_ret_exp_sq + industry + revenue + employees + total_crossbuy + total_freq + total_freq_sq,
+                    dist = "lognormal", data = customerChurn)) %>% 
+  summary
+
+writeLines(sprintf("-2 Log Likelihood (smaller is better): %.3f", -2 * logLik(Ch06.churn)[1]))
+writeLines(sprintf("              AIC (smaller is better): %.3f", extractAIC(Ch06.churn)[2]))
+writeLines(sprintf("              BIC (smaller is better): %.3f", extractAIC(Ch06.churn, 
+                                                              k = log(Ch06.churn$df + Ch06.churn$df.residual))[2]))
+
+writeLines("\n Wald test of predictors")
+car::Anova(Ch06.churn, type="III", test="Wald")
+
+```
+
+
+Как видно из результатов, все предикторы, за исключением `Industry`, значимы при p<0,05. Вслед за авторами можно найти, что коэффициент `Avg_Ret_Exp` положителен с *убывающей доходностью*, предполагая, что чем выше среднемесячные расходы на усилия по удержанию (до порога), тем дольше вероятность того, что клиент скорее всего откажется. Коэффициент `Total_Crossbuy` является положительным, поэтому можно предположить, что чем больше категорий покупает покупатель, тем дольше ожидаемый срок службы. Коэффициент `Total_Freq` также положителен с *убывающей доходностью*, предлагая (аналогично средним расходам на удержание), что чем чаще покупатель покупает (до некоторого порога), тем дольше ожидаемый срок жизни клиента. Это означает, что клиенты, которые не покупают очень часто, вряд ли останутся надолго, а покупатели, которые покупают очень часто, скорее всего, исчерпывают потребность в покупке быстро и уходят раньше. Это клиенты, которые покупают с умеренной частотой, которые, вероятно, будут иметь самый продолжительный срок службы в фирме. Авторы находят, что предикторы `Revenue` и `Employees` имеют положительную связь c ожидаемой продолжительностью жизни клиента (`Duration`). Это означает, что клиенты, у которых есть более высокий доход и больше сотрудников, с большей вероятностью будут иметь более длительный срок с фирмой. Наконец, значение `Scale` ($\sigma$) = `r sprintf("%.3f", Ch06.churn$scale)`. Этот коэффициент *масштаба* оценочное значение, которое помогает масштабировать случайные отклонения в модели.
+
+В то время как для некоторых распределений он может влиять на форму *функции риска*, в этом случае с учетом лог-нормального распределения продолжительности жизни, изменения в параметре масштаба (медиана) служат только для сжатия или растяжения *функции риска*. Оно соответствует стандартному отклонению в нормальном распределении.
+
+Рассмотрим графики полученной параметрической модели оттока, согласно заданного распределения (в данном случае - **логнормального**), где будут показаны:
+
+1. Плотность вероятности оттока  
+
+2. Кумулятивная вероятность функции оттока 
+
+3. Вероятностная функции выживания (обратная кумулятивной вероятности функции оттока)
+
+4. *Функция риска* оттока
+
+На всех графиках на оси абсцисс (x) отложено время, а на отдельных графиках приведены для шесть квинтелей интервальной незавиcимой переменной `Avg_ret_exp` (упорядоченный ряд этого предиктора разделен на 5 равных частей).
+
+```{r Ch06: Charts of Parametric Survival Model}
+# A R Function for Evaluating the Probability Density, Cumilative Distribution,
+# Survival and Hazard Functions for Parametric Survival Models - Timothy R. Johnson (trjohns@uidaho.edu)
+# see https://rpubs.com/trjohns/survfunc
+ 
+survfunc <- function (object, t, newdata, name = "t") 
+{
+  
+  # Load required parameters and packages
+  stopifnot(is.vector(t) | is.null(t) )
+  if (!requireNamespace("extraDistr", quietly = TRUE)) 
+    stop("\"extraDistr\" is needed for this function to work. Install it via install.packages(\"extraDistr\")",
+         call. = FALSE)
+  if (!requireNamespace("ggplot2", quietly = TRUE)) 
+    stop("\"ggplot2\" is needed for this function to work. Install it via install.packages(\"ggplot2\")",
+         call. = FALSE)
+
+      newdata <- do.call(rbind, rep(list(newdata), length(t)))
+    t <- rep(t, each = nrow(newdata)/length(t))
+    if (class(object) != "survreg") 
+        stop("not a survreg object")
+    lp <- predict(object, newdata = newdata, type = "lp")
+    if (object$dist %in% c("weibull", "exponential")) {
+        newdata$pdf <- dweibull(t, 1/object$scale, exp(lp))
+        newdata$cdf <- pweibull(t, 1/object$scale, exp(lp))
+        newdata$haz <- exp(dweibull(t, 1/object$scale, exp(lp), 
+            log = TRUE) - pweibull(t, 1/object$scale, exp(lp), 
+            lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "lognormal") {
+        newdata$pdf <- dlnorm(t, lp, object$scale)
+        newdata$cdf <- plnorm(t, lp, object$scale)
+        newdata$haz <- exp(dlnorm(t, lp, object$scale, log = TRUE) - 
+            plnorm(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "gaussian") {
+        newdata$pdf <- dnorm(t, lp, object$scale)
+        newdata$cdf <- pnorm(t, lp, object$scale)
+        newdata$haz <- exp(dnorm(t, lp, object$scale, log = TRUE) - 
+            pnorm(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "loglogistic") {
+        newdata$pdf <- dlogis(log(t), lp, object$scale)/t
+        newdata$cdf <- plogis(log(t), lp, object$scale)
+        newdata$haz <- exp(dlogis(log(t), lp, object$scale, log = TRUE) - 
+            log(t) - plogis(log(t), lp, object$scale, lower.tail = FALSE, 
+            log.p = TRUE))
+    }
+    else if (object$dist == "logistic") {
+        newdata$pdf <- dlogis(t, lp, object$scale)
+        newdata$cdf <- plogis(t, lp, object$scale)
+        newdata$haz <- exp(dlogis(t, lp, object$scale, log = TRUE) - 
+            dlogis(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "exponential") {
+        newdata$pdf <- dexp(t, lp, object$scale)
+        newdata$cdf <- pexp(t, lp, object$scale)
+        newdata$haz <- exp(dexp(t, lp, object$scale, log = TRUE) - 
+            dexp(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "rayleigh") {
+        newdata$pdf <- drayleigh(t, lp, object$scale)
+        newdata$cdf <- prayleigh(t, lp, object$scale)
+        newdata$haz <- exp(drayleigh(t, lp, object$scale, log = TRUE) - 
+            drayleigh(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "t") {
+        newdata$pdf <- dt(t, lp, object$scale)
+        newdata$cdf <- pt(t, lp, object$scale)
+        newdata$haz <- exp(dt(t, lp, object$scale, log = TRUE) - 
+            dt(t, lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else if (object$dist == "loggamma") {
+        newdata$pdf <- dgamma(exp(t), lp, object$scale)
+        newdata$cdf <- pgamma(exp(t), lp, object$scale)
+        newdata$haz <- exp(dgamma(exp(t), lp, object$scale, log = TRUE) - 
+            dgamma(exp(t), lp, object$scale, lower.tail = FALSE, log.p = TRUE))
+    }
+    else {
+        stop("unknown distribution")
+    }
+    newdata$sur <- 1 - newdata$cdf
+    newdata[name] <- t
+    return(newdata)
+}
+
+quantiles <- 5
+survdist.df <- survfunc(Ch06.churn, t = seq(1, max(customerChurn$duration), by = 1),
+  # newdata = data.frame(Ch06.churn$means %>% .[-1] %>% t))
+  newdata = bind_cols(
+          data.frame(avg_ret_exp = quantile(customerChurn$avg_ret_exp, probs = seq(0, 1, 1/quantiles)) %>%
+                       as.vector %>%  round(., digits = 2)),
+          data.frame(Ch06.churn$means %>% .[-c(1:2)] %>% t %>% rep(., each = quantiles + 1) %>%
+                       matrix(., nrow = quantiles + 1)) %>%
+                         setNames(., names(coef(Ch06.churn))[-c(1:2)]))
+          )
+head(survdist.df)
+
+# Probability Density Function
+ggplot(survdist.df, aes(x = t, y = pdf)) +
+  geom_line() + ggtitle("Probability Density Function by Quintiles of 'Avg_ret_exp'") +
+  facet_wrap(~ avg_ret_exp) + theme_light() +
+  xlab("Time (Days)") + ylab("Probability Density")
+
+# Distribution Function of Extinction or Churn
+ggplot(survdist.df, aes(x = t, y = cdf)) +
+  geom_line() + ggtitle("Distribution Function of Churn by Quintiles of 'Avg_ret_exp'") +
+  facet_wrap(~ avg_ret_exp) + theme_bw() +
+  xlab("Time (Days)") + ylab("Cumulative Probability")
+
+# Survival Function
+ggplot(survdist.df, aes(x = t, y = sur)) +
+  geom_line() + ggtitle("Survival Function by Quintiles of 'Avg_ret_exp'") +
+  facet_wrap(~ avg_ret_exp) + theme_bw() +
+  xlab("Time (Days)") + ylab("Proportion of Surviving")
+
+# Hazard Function
+ggplot(survdist.df, aes(x = t, y = haz)) +
+  geom_line() + ggtitle("Hazard Function by Quintiles of 'Avg_ret_exp'") +
+  facet_wrap(~ avg_ret_exp) + theme_light() +
+  xlab("Time (Days)") + ylab("Hazard Rate")
+
+```
+
+На графиках *функции риска* хорошо видно, согласно модели практически отсутствует риск оттока в первый год после привлечения клиента даже без всяких издержек на его сохранение. При этом с увеличением суммы выделяемой на удержание клиентов сокращается вероятность оттока в во второй год. Кривая *функции риска* с ростом затрат на сохранение как бы сдвигается в правую часть графика. Поэтому после достижения 60 долл. вероятность риска оттока падает практически до нуля даже в конце второго года. 
+
+Когда авторы вычислили отношение для каждой из статистически значимых переменных, то получили следующие результаты для увеличения 1 единицы предиктора:
+
+| **Предикторы**  | Отношение продолжительности (Hazard Ratio of Duration)                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| Avg_ret_exp     | exp(`r sprintf("%.4f + %.4f", coef(Ch06.churn)['avg_ret_exp'], coef(Ch06.churn)['avg_ret_exp_sq'])` $*$ `Avg_Ret_Exp`) - а может вернее `Avg_Ret_Exp_Sq` |
+| Total_crossbuy  |  `r sprintf("%.3f", exp(coef(Ch06.churn)['total_crossbuy']))` |
+| Total_freq      | `r sprintf("%.4f", coef(Ch06.churn)['total_freq'])` `r sprintf("%.4f", coef(Ch06.churn)['total_freq_sq'])` $*$ `Total_freq` - а может вернее `Total_freq_Sq` |
+| Revenue         | `r sprintf("%.3f", exp(coef(Ch06.churn)['revenue']))` |
+| Employees       | `r sprintf("%.3f", exp(coef(Ch06.churn)['employees']))` |
+
+
+В результате получаются следующие данные из соотношений. Что касается `Avg_Ret_Exp`, то видно, что отношение зависит от уровня `Avg_Ret_Exp`. Это связано с тем, что авторы включают в модель как сам этот показатель, так и его квадрат. Например, если обычно тратится 15 долларов на данного клиента в месяц, то тратя 16 долларов, т.е. +1 долл. от некоторого *начального уровня* (15 долл.), то можно увидеть увеличение ожидаемой продолжительности на exp (`r sprintf("%.4f", coef(Ch06.churn)['avg_ret_exp'])` `r sprintf("%.4f", coef(Ch06.churn)['avg_ret_exp_sq'])` $*$ 15) = exp (`r sprintf("%.4f", coef(Ch06.churn)['avg_ret_exp'] + coef(Ch06.churn)['avg_ret_exp_sq'] * 15)`) = `r sprintf("%.3f ", exp(coef(Ch06.churn)['avg_ret_exp'] + coef(Ch06.churn)['avg_ret_exp_sq'] * 15))`. Это означает, что, увеличив наши расходы с 15 до 16 долларов США, следует рассчитывать увеличение ожидаемой продолжительности на `r sprintf("%.1f ", (exp(coef(Ch06.churn)['avg_ret_exp'] + coef(Ch06.churn)['avg_ret_exp_sq'] * 15) - 1 ) * 100)`%. Кроме того, важно отметить, что это будет зависеть от *начального уровня* `Avg_Ret_Exp`. Что касается `Total_Crossbuy`, то для каждого прироста покупки по другой категории ожидаемая продолжительность должна увеличиться на `r sprintf("%.1f", (exp(coef(Ch06.churn)['total_crossbuy']) - 1) * 100)`%. По `Total_Freq` видно, что отношение также зависит от уровня `Total_Freq`. Это связано с тем, что в модель авторами включались кроме самого показателя также и его квадрат (аналогично случая для `Avg_Ret_Exp`) для `Total_Freq`. Например, если клиента, который сдедал пять покупок в продолжении сотрудничества  с фирмой ("жизни"), покупая в шестой раз, увидеть увеличение ожидаемой продолжительности на exp(`r sprintf("%.4f", coef(Ch06.churn)['total_freq'])` `r sprintf("%.4f", coef(Ch06.churn)['total_freq_sq'])` $*$ 5) = exp(`r sprintf("%.4f", coef(Ch06.churn)['total_freq'] + coef(Ch06.churn)['total_freq_sq'] * 5)`) = `r sprintf("%.3f ", exp(coef(Ch06.churn)['total_freq'] + coef(Ch06.churn)['total_freq_sq'] * 5))`.
+
+Правда, при этом авторы не объясняют отчего умножают коэффициенты квадратичных предикторов не на квадратичные значения, например, `Avg_ret_exp_sq` или `Total_Freq_sq`, а лишь на их собственные значения. Возможно, это такая-то опечатка.
+
+Это означает, что, когда клиент увеличивает общие покупки с пяти до шести, следует увеличение ожидаемой продолжительности на `r sprintf("%.1f ", (exp(coef(Ch06.churn)['total_freq'] + coef(Ch06.churn)['total_freq_sq'] * 5) - 1) * 100 )`%. Опять же, важно отметить, что это будет зависеть от *начального уровня* `Total_Freq`. Что касается `Revenue`, то при каждом увеличении выручки на 1 млн. долл. ожидаемая продолжительность должна увеличиться на `r sprintf("%.2f", (exp(coef(Ch06.churn)['revenue'])-1) * 100)`%. Наконец, что касается сотрудников, мы видим, что для каждого увеличения числа сотрудников на одного человека ожидаемая продолжительность должна увеличиться на `r sprintf("%.2f", (exp(coef(Ch06.churn)['employees']) - 1) * 100 )`%.
+
+Следующий шаг - определить, насколько хорошо модель объясняет ожидаемую продолжительность работы клиента. Поскольку авторы еще не заметили оттока 268 клиентов, то прогнозируется ожидаемая продолжительность для 232 клиентов, которых фактически наблюдаются, отбирая из базы данных клиентов и сравнивая фактические продолжительности с прогнозируемыми сроками. Прогнозируется длительность сотрудничества клиентов с фирмой, используя следующее уравнение:
+
+$$ \displaystyle\large E (Duration) = exp( X'_i \beta ) + \sigma \varepsilon. \hspace{.5 in} [2]$$
+
+- где  exp(...) - экспотенциальная функция, 
+
+- $X'_i$ - матрица предикторов,
+
+- $\beta$ - вектор вектор оценочных коэффициентов из представленной модели *продолжительности жизни*.
+
+Теперь предсказанное значение продолжительности сотрудничества `Duration`, полученное для каждого из уже клиентов, ушедших в отток, можно рассчитать точность полученной модели по описанной в предыдущих главах формуле.
+
+```{r Ch06 : Error of Survival Model}
+# Computing the Mean Absolute Deviation (MAD) and Mean Absolute Percent Error (MAPE)
+
+pred_dur <- predict(Ch06.churn, newdata = filter(customerChurn, censor == 0), type = "response")
+
+with(filter(customerChurn, censor == 0), {
+  # mean_duration
+  m_dur <- mean(duration)
+  
+  # mad = mean(abs(pred_dur - duration));
+  writeLines(sprintf("Mean Absolute Deviation (MAD): %.1f дней", mean(abs(duration - pred_dur))))
+  
+  # mape = mean(abs(duration - pred_dur)/duration);
+  writeLines(sprintf("Mean Absolute Percent Error (MAPE): %.2f %%", mean(abs(duration - pred_dur) / duration) * 100))
+  
+  # mad1 = mean(abs(duration - mean(duration));
+  mad1 <- mean(abs(duration - m_dur))
+  writeLines(sprintf("Naive Mean Absolute Deviation (MAD1): %.1f дней", mad1))
+  
+  # mape1 = mean(abs(duration - mean(duration))/duration);
+  mape1 <- mean(abs(duration - m_dur) / duration) * 100
+  writeLines(sprintf("Naive Mean Absolute Percent Error (MAPE1): %.2f %%", mape1))
+  })
+  
+```
+
+Это означает, что в среднем каждый из полученных прогнозов `Duration` отклоняется от фактического значения примерно на `r sprintf("%.0f", mean(abs(filter(customerChurn, censor == 0)$duration - pred_dur)))` дней. Если бы кто-либо вместо этого использовали среднее значение `Duration` - `r sprintf("%.2f", mean(filter(customerChurn, censor == 0)$duration))` в качестве *наивного* прогноза для всех клиентов, которые ушли в отток, получили бы MAD1 = `r sprintf("%.1f", mean(abs(filter(customerChurn, censor == 0)$duration - mean(filter(customerChurn, censor == 0)$duration))))` дней. Очевидно, модель *оттока* делает работу по прогнозированию продолжительности времени дожития значительно лучше, чем *наивная* модель.
+
+Авторы пишут, что хотя они не могут определить прогностическую точность их логистической модели против фактической продолжительности сотрудничества с клиентами, которые еще не ушли, не дожидаясь момента их оттока (пока ведь прошло 730 дней), авторы могут видеть, хорошо ли авторская логит-модель классифицирует клиентов как ушедших в отток в пределах наблюдаемого временного окна (730 дней) или подвергается цензуре в конце временного окна (остающихся с контакте с фирмой). В этом случае авторы дают значение **1** фактическому оттоку (Act_Ch), когда клиент имеет продолжительность менее 730 и **0**, когда клиент имеет цензурированную продолжительность жизни 730 дней. Затем дается значение **1** для прогнозируемого оттока (Pred_Ch), когда предсказание длительности клиента в интервале от 0 до 730 либо **0** предсказание длительности клиента больше или равно 730. Затем мы можем сравнить степень попадания в отток между прогнозируемыми и фактическими значениями в **матрице ошибок** (англ. `Confusion Matrix`):
+
+```{r Ch06: Confusion Matrix}
+
+writeLines("\n Duration Model: Association of Predicted Churn and Observed Churn \n")
+pred_ch <- predict(Ch06.churn, newdata = customerChurn, type = "response")
+pred_ch <- if_else(pred_ch >= 730, 0, 1) %>%  factor
+
+(cm <- caret::confusionMatrix(data = pred_ch, reference = ifelse(customerChurn$censor == 1, "0", "1") %>% factor,
+                       positive = "1", mode = "everything"))
+
+```
+
+### Как это использовать?
+
+Как видно из таблицы, авторская модель хорошо прогнозирует `r sprintf("%.1f", cm$byClass["Specificity"]*100)`% остающихся клиентов, которых не перепутали с ушедшими (`r cm$table[c(1)]`/`r table(customerChurn$censor)[2]` - *коэффициент спеицифичности*) и `r sprintf("%.2f", cm$byClass["Sensitivity"]*100)`% клиентов, которые уже ушли в отток (`r cm$table[c(4)]`/`r table(customerChurn$censor)[1]` - *коэффициент чуствительности*). Это  увеличение прогностической способности против *наивной* модели случайных догадок, которая была бы равна только `r sprintf("%.2f", cm$overall["AccuracyNull"]*100)`% (см. показатель "`No Information Rate`" в *Матрице ошибок*) для этого набора данных. Поскольку наша модель лучше, чем альтернатива - модель *случайных догадок*, можно считать, что точность прогноза модели хорошая. Если для сравнения доступны другие сравнительные модели, то «лучшая» модель будет той, которая обеспечивает наивысшую аккуратность (англ. "`accuracy`") как оттока, так и не оттока, или, другими словами, предсказание обеспечит максимальную сумму диагонали. В этом случае сумма диагонали равна `r sum(cm$table[c(1,4)])` и точна `r sprintf("%.1f", cm$overall["Accuracy"]*100)`% времени (`r sum(cm$table[c(1,4)])`/`r sum(cm$table)`).  Однако, учитывая, что классы у нас не вполне сбалансированы: превалирование не равно 50%, а у оттока меньше - `r sprintf("%.1f", cm$byClass["Prevalence"]*100)`% корректнее всего смотреть на коэффициент Kappa - `r sprintf("%.1f", cm$overall["Kappa"]*100)`%.
+
+---
+
+## Дискуссия по поводу авторского подхода к выбору распределения модели выживания и оценки её точности
+
+Давайте разберем почему авторы остановились на таком нечасто встречающемся в анализе выживания распределении -  **лог-нормальном** и постараемя понять чем это было вызвано. Для этого нам необходимо осуществить следующие шаги:
+
+1. Определить в какому *типу непрерывного распределения* относится правосторонний цензуированный набор количества выживших клиентов фирмы.
+
+2. Найти возможность построить регрессионую модель выживания, основанную на различных *типах непрерывного распределения*.
+
+3. Оценить точность построенных регрессионых моделях выживания.
+
+### Подбор вида и параметров теоретического распределения для правосторонных цензуированных эмпирических данных
+
+В начале рассмотрим внимательнее распределение нецензуированных величин продолжительности жизни клиентов, т.е. тех, которые ушли в отток и поэтому имевших срок жизни менее 730 дней. Они будут представлены на кривых в левой части четырех графиков ниже, до прямоугольной части с цензуированными (так и неушедшими в отток за 730 дней) клиентами.
+
+Для этого я воспользуюсь функцией `descdist` из пакета `fitdistrplus`. Но для работы с цензуированными данными требуется настроить спеицальный входной формат для описания подобных данных. Затем нам важно подобрать такое теоретическое распределение, которое в максимальной мере описало бы весь набор клиентов.
+
+```{r Ch06: Fit Distributions for Parametric Surval Model, warning=FALSE, out.width = "200%", out.height = "200%"}
+# https://rviews.rstudio.com/2017/09/25/survival-analysis-with-r/
+
+# Description of an empirical distribution for Censored data using Cullen & Frey Graph
+library('fitdistrplus')
+
+# fitdistrplus's Special format for Right-Censored data
+distcens.df <- data.frame(
+  left = customerChurn$duration,  # Assign left side as maximal value when censored
+  right = if_else(customerChurn$censor == 1, NA_real_,          # Assign right side as NA when censored
+                  customerChurn$duration))
+
+# # fitdistrplus's Special format for Left-Censored data
+# distcens.df <- data.frame(
+#   left= ifelse(x <= x.min, NA, x),   # Assign left side as NA when censored
+#   right=ifelse(x <= x.min, x.min, x) # Assign right side as x.min when censored
+# )
+
+# Cullen & Fley Graph: An Empirical Distribution for w/o Censored Events
+set.seed(2018)
+x <- fitdistrplus::descdist(distcens.df$left %>% na.omit %>% as.vector, boot = 500, discrete = FALSE)
+mtext("An Empirical Distribution of `customerChurn$duration` w/o Censored Events", line = 0.5, cex =0.75)
+
+# Plot of Empirical and Theoretical distributions for Right-censored data
+x <- fitdist(distcens.df$left %>% na.omit %>% as.vector, "lnorm", method = "mme") # Without Censored Events
+plotdistcens(distcens.df, dist ="lnorm", para = list(meanlog = x$estimate['meanlog'], sdlog =x$estimate['sdlog']),
+             Turnbull = FALSE)
+mtext(sprintf("Lognormal distribution (Meanlog = %.4f, Sdlog = %.4f) of `customerChurn$duration` w/o Censored Events", x$estimate['meanlog'], x$estimate['sdlog']), line = 0.5, cex =0.75)
+
+x <- fitdist(distcens.df$left %>% na.omit %>% as.vector, "gamma", method = "mme") # Without Censored Events
+plotdistcens(distcens.df, dist ="gamma", para = list(shape = x$estimate['shape'], rate = x$estimate['rate']), Turnbull= F)
+mtext(sprintf("Gamma distribution (Shape = %.4f, Rate = %.4f) of `customerChurn$duration` w/o Censored Events",
+              x$estimate['shape'], x$estimate['rate']), line = 0.5, cex =0.75)
+
+x <- fitdist(distcens.df$left %>% na.omit %>% as.vector %>% log, "gamma", method ="mme") # Without Censored Events
+plotdistcens(distcens.df %>% log, dist ="gamma", para = list(shape = x$estimate['shape'], rate = x$estimate['rate']), Turnbull = FALSE)
+mtext(sprintf("Log-Gamma distribution (Shape = %.4f, Rate = %.4f) of `customerChurn$duration` w/o Censored Events", x$estimate['shape'], x$estimate['rate']), line = 0.5, cex =0.75)
+
+distcens2.df <- data.frame(
+  left = customerChurn$duration / max(customerChurn$duration),  # Assign left side as maximal value when censored
+  right = if_else(customerChurn$censor == 1, NA_real_,          # Assign right side as NA when censored
+                  customerChurn$duration / max(customerChurn$duration)))
+
+# x <- fitdistcens(distcens.df, "beta", method = "mme") # `fitdistcens` Offers Similar Functionality
+x <- fitdist(distcens2.df$left %>% na.omit %>% as.vector, "beta", method = "mme") # Without Censored Events
+# x <- fitdist(distcens2.df$right %>% na.omit %>% as.vector, "beta", method = "mme") # All - Right-censored Events
+plotdistcens(distcens2.df, dist ="beta", para = list(shape1 = x$estimate['shape1'], shape2 =x$estimate['shape2']),
+             Turnbull = FALSE)
+mtext(sprintf("Beta distribution (Shape1 = %.4f, Shape2 = %.4f) of `customerChurn$duration` w/o Censored Events",
+              x$estimate['shape1'], x$estimate['shape2']), line = 0.5, cex =0.75)
+
+Alpha <- x$estimate['shape1']; Beta <- x$estimate['shape2']
+
+# # Univariate Distribution Relationships - http://www.math.wm.edu/~leemis/chart/UDR/UDR.html
+# # Beta Distriburion - https://www.itl.nist.gov/div898/handbook/eda/section3/eda366h.htm
+# #  The initial values of Alfa and Beta parameters approximately equal to
+# x_m = mean(distcens.df$left, na.rm = TRUE)
+# sprintf("\alpha ~~ %.6f and\ beta ~~ %.6f", x_m * (x_m*(1 - x_m) / var(distcens.df$left, na.rm = TRUE) - 1),
+#        (1 - x_m) * (x_m*(1 - x_m) / var(distcens.df$left, na.rm = TRUE) - 1))
+```
+
+Итак, величины продолжительности жизни *клиентов, ушедших в отток* не распределены ни по лог-нормальному, ни по Гамма, но ближе всего к лог-гамма и даже **бета-распределению** $Be(\alpha, \beta)$ с параметрами $\alpha$ - `r sprintf("%.6f", Alpha)` и $\beta$ - `r sprintf("%.6f", Beta)`.
+
+#### Бета-распределение и попытка его применения в функции `survreg` из пакете `survival`
+
+**Бета распределение** - двухпараметрическое семейство абсолютно непрерывных распределений. Используется для описания случайных величин, значения которых ограничены конечным интервалом. Функция плотности вероятности Бета-распределения имеет вид:
+
+$$ f(x) = \frac{x^{\alpha - 1}(1-x)^{\beta - 1}}{B (\alpha, \beta)} \hspace{.5 in} [3], $$
+где $\alpha, \beta >0$ - фиксированные параметры, и
+
+$B(\alpha, \beta) = \int_0 ^x x^{(\alpha - 1)} * (1-x)^{(\beta - 1)} dt$ - бета-функция.
+
+Функция Бета-распределения (англ. `Cumulative Density Function (CDF)`):
+
+$$ F(x) = I_{x}(\alpha, \beta) = \frac{\int_{0}^{x}{x^{\alpha - 1}(1 - x)^{\beta - 1}dt}}{B(\alpha, \beta)} \hspace{.2in} 0 \le x \le 1; \hspace{.2in} \alpha, \beta > 0 \hspace{.5 in} [4]$$
+
+Функция риска Бета-распределения (англ. `Hazard Function`):
+
+$$ h(t) = \frac{f(x)} {1 - F(x)} = \frac{f(x)} {S(x)} = \frac{x^{\alpha -1}(1 - x)}{B (\alpha, \beta )- B ( x|\alpha, \beta)} \hspace{.5 in} [5]  $$
+
+Однако, среди нескольких распределений используемых функцией `survreg` бета-распределение отсутствует. Я попытаюсь создать пользовательские установки для этого теретического распределения самостоятельно. Для описания Бета-распределения в качестве параметра `dist` кроме описания функции плотности вероятности и кумулятивной функции вероятности необходимо взять первую и вторую производные функции плотности. Поэтому я обращусь к условно-бесплатному [ресурсу](http://www.wolframalpha.com/input/?i=derivative+of++x%5E(%CE%B1-1)(1-x)%5E(%CE%B2-1)%2Fbeta(%CE%B1,%CE%B2)) [WolframAlpha](http://www.wolframalpha.com/input/?i=second+derivative+of+x%5E(%CE%B1-1)(1-x)%5E(%CE%B2-1)%2Fbeta(%CE%B1,%CE%B2)).
+
+**Первая производная** функции *плотности вероятности Бета-распределения*:
+
+$$ \frac{ \partial } {\partial x} \left( {\frac {  x^{\alpha - 1} (1 - x)^{\beta - 1}} {B (\alpha, \beta)}} \right) = \frac { (\alpha - 1) x ^{(\alpha - 2)} (1 - x)^{(\beta - 1)} - (\beta - 1) x^{(\alpha - 1)} (1 - x)^{(\beta - 2)} } {B(\alpha, \beta)} \hspace{.5 in} [6].$$
+**Вторая производная** функции *плотности вероятности Бета-распределения*:
+
+$$ \frac{ \partial^2 } {\partial x^2} \left( {\frac { x^{\alpha - 1} (1 - x)^{\beta - 1} } {B (\alpha, \beta)}} \right)  = \frac {(\alpha - 2) (\alpha - 1) x^ {(\alpha - 3)} (1 - x)^ {(\beta - 1)} - 2 (\alpha - 1) (\beta - 1) x^ {(\alpha - 2)} (1 - x)^ {(\beta - 2)} + (\beta - 2) (\beta - 1) x^ {(\alpha - 1)} (1 - x)^{(\beta - 3)} } {B(\alpha, \beta)} \hspace{.5 in} [7]. $$
+
+Полученные производные можно вставить в определитель Бета-распределения для функции `survreg`.
+
+```{r Beta distribution example}
+# Beta Distribution - User-defined Example
+
+mybeta <- list(name = "Beta",
+
+init = function (x, weights, ...)
+{
+mean <- sum(x * weights)/sum(weights)
+var <- sum(weights * (x - mean)^2)/sum(weights)
+c(mean, var)
+},
+
+density = function (x, parms)
+{
+cbind(
+  pbeta(x, shape1 = Alpha, shape2 = Beta, ncp = 0), # F - Cumulative Distribution Function
+  1 - pbeta(x, shape1 = Alpha, shape2 = Beta, ncp = 0), # S = (1 - F) - Survival Function
+  dbeta(x, shape1 = Alpha, shape2 = Beta, ncp = 0), # f - Density Function
+  ( (Alpha - 1) * x^(Alpha - 2) * (1 - x)^(Beta - 1) - (Beta - 1) *
+     x^(Alpha - 1) * (1 - x)^(Beta - 2) )/beta(Alpha, Beta), # f'/f - the 1st derivative of the Density function
+  ( (Alpha - 2) * (Alpha - 1) * x^(Alpha - 3) * (1 - x)^(Beta - 1) - 
+     2 * (Alpha - 1) * (Beta - 1) * x^(Alpha - 2) * (1 - x)^(Beta - 2) + 
+     (Beta - 2) * (Beta - 1) * x^(Alpha - 1) * (1 - x)^(Beta - 3) )/
+    beta(Alpha, Beta) # f''/f - the 2nd derivative of the Density func.
+    )
+},
+
+quantile = function (p, parms)
+qbeta(x, shape1 = Alpha, shape2 = Beta, ncp = 0),
+
+deviance = function (...)
+stop("deviance residuals not defined")
+)
+
+# Fit Beta Distribution (User-define Distribution)
+form <- formula(Surv(time = customerChurn$duration, event = (customerChurn$censor == 0), type = "right") ~ #1)
+                        avg_ret_exp + avg_ret_exp_sq +
+                        industry + revenue + employees + total_crossbuy + total_freq + total_freq_sq)
+
+UpLimit <- max(customerChurn$duration)
+# fit_bet <- survreg(form, dist = mybeta, data = customerChurn)
+# m <- forecast::accuracy(if_else(predict(fit_bet, type="response") > UpLimit, UpLimit,
+#                                 predict(fit_bet, type="response")), customerChurn$duration)
+# SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_bet$dist['name']), m,
+#                                                        AIC = extractAIC(fit_bet)[2], stringsAsFactors = FALSE))
+
+```
+
+Увы, все эти манипуляции не позволяют мне настроить `survreg` на работу с бета-распределением. Всякий раз на этих данных и заданной авторами формуле я получаю:
+
+`Error in coxph.wtest(t(x) %*% (wt * x), c((wt * eta + weights * deriv$dg) %*%  :` 
+`  NA/NaN/Inf in foreign function call (arg 3)`
+
+Поэтому мне придется ограничиться доступными мне теоретическими распределениями, включая лог-гамма, распределением задаваемое пользователем (параметр `shape` для него я подобрал вручую, а `scale = 1`).
+
+### Построение моделей выживания по нескольким типам непрерывных распределений
+
+После неудачи с бета-распределением построим набор моделей выживания для нескольких *типов непрерывных теоретических распределений*, которые могут подходить для этих данных:
+
+* распределение Вейбула,
+
+* Лог-нормальное распределение,
+
+* Экспоненциальное распределение,
+
+* Нормальное (Гаусса) распределение,
+
+* Лог-логистическое распределение,
+
+* Логистическое распределение,
+
+* Экстремального распределения,
+ 
+* распределение Рэлея,
+
+* распределение Стьюдента,
+
+* Лог-гамма распределение.
+
+```{r Fit of Parametric Models for AFT models, warning=FALSE, }
+# Parametric Models for AFT (accelerated failure) models by survival::survreg
+# customer_Churn <- filter(customerChurn, censor == 0)
+
+UpLimit <- max(customerChurn$duration) # 730 days
+form <- formula(Surv(time = customerChurn$duration, event = (customerChurn$censor == 0), type = "right") ~ #1)
+      avg_ret_exp + avg_ret_exp_sq + industry + revenue + employees + total_crossbuy + total_freq + total_freq_sq)
+
+# Kaplan Meier Survival Curve
+fit <- survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ 1, data = customerChurn,
+               conf.int = .99)
+
+# # List of distributions available in `survreg` function
+# names(survreg.distributions)
+
+names_dist <- c('weibull', 'lognormal', 'exponential', 'gaussian', 'loglogistic', 'logistic', 'extreme', 'rayleigh', 't', 'Log-Gamma')
+
+SurvResults.df <- data.frame(Dist = character(), ME = numeric(), RMSE = numeric(), MAE = numeric(), 
+                             MPE = numeric(), MAPE = numeric(), AIC = numeric())  
+
+# Fit Weibull Distribution
+fit_wei <- survreg(form, dist = 'weibull', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_wei, type="response") > UpLimit, UpLimit,
+                                predict(fit_wei, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_wei$dist), m,
+                                                       AIC = extractAIC(fit_wei)[2], stringsAsFactors = FALSE))
+
+# Fit Lognormal Distribution
+fit_lnor <- survreg(form, dist = 'lognormal', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_lnor, type="response") > UpLimit, UpLimit,
+                                predict(fit_lnor, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_lnor$dist), m,
+                                                       AIC = extractAIC(fit_lnor)[2], stringsAsFactors = FALSE))
+
+# Fit Exponential Distribution
+fit_exp <- survreg(form, dist = 'exponential', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_exp, type="response") > UpLimit, UpLimit,
+                                predict(fit_exp, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_exp$dist), m,
+                                                       AIC = extractAIC(fit_exp)[2], stringsAsFactors = FALSE))
+
+# Fit Gaussian (Normal) Distribution
+fit_nor <- survreg(form, dist = 'gaussian', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_nor, type="response") > UpLimit, UpLimit,
+                                predict(fit_nor, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_nor$dist), m,
+                                                       AIC = extractAIC(fit_nor)[2], stringsAsFactors = FALSE))
+
+# Fit Loglogistic Distribution
+fit_llog <- survreg(form, dist = 'loglogistic', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_llog, type="response") > UpLimit, UpLimit,
+                                predict(fit_llog, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_llog$dist), m,
+                                                       AIC = extractAIC(fit_llog)[2], stringsAsFactors = FALSE))
+
+# Fit Logistic Distribution
+fit_log <- survreg(form, dist = 'logistic', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_log, type="response") > UpLimit, UpLimit,
+                                predict(fit_log, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_log$dist), m,
+                                                       AIC = extractAIC(fit_log)[2], stringsAsFactors = FALSE))
+
+# Fit Extreme Distribution
+fit_ext <- survreg(form, dist = 'extreme', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_ext, type="response") > UpLimit, UpLimit,
+                                predict(fit_ext, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_ext$dist), m,
+                                                       AIC = extractAIC(fit_ext)[2], stringsAsFactors = FALSE))
+
+# Fit Rayleigh Distribution
+fit_ray <- survreg(form, dist = 'rayleigh', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_ray, type="response") > UpLimit, UpLimit,
+                                predict(fit_ray, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_ray$dist), m,
+                                                       AIC = extractAIC(fit_ray)[2], stringsAsFactors = FALSE))
+
+# Fit Student-t Distribution
+fit_t <- survreg(form, dist = 't', data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_t, type="response") > UpLimit, UpLimit,
+                                predict(fit_t, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_t$dist), m,
+                                                       AIC = extractAIC(fit_t)[2], stringsAsFactors = FALSE))
+
+# Loggamma - User-defined Example
+# see https://www.ms.uky.edu/~mai/Rsurv.pdf
+k <- 1.5
+l <- 1
+
+myloggamma <- list(name = "Log-Gamma",
+
+init = function (x, weights, ...)
+{
+mean <- sum(x * weights)/sum(weights)
+var <- sum(weights * (x - mean)^2)/sum(weights)
+c(mean, var)
+},
+
+density = function (x, parms)
+{
+expx <- exp(x) # Exponentiation for conversion from logarithmic gamma
+cbind(
+  pgamma(expx, shape = k, rate = l), # F - Cumulative Distribution Function
+  1 - pgamma(expx, shape = k, rate = l), # S = 1 - F - Survival Function
+  expx * dgamma(expx, shape = k, rate = l), # f - Density Function
+  1 + (k - 1 - expx), # f'/f - the first derivative of the Density functioт
+  1 + 3 * (k - 1 - expx) + (k - 1) * (k - 2 - expx) -
+  expx * (k - 1 - expx) # f''/f - the second derivative of the Density function
+)
+},
+
+quantile = function (p, parms)
+log(qgamma(p, shape = k, scale = 1)),
+
+deviance = function (...)
+stop("deviance residuals not defined")
+)
+
+# Fit Log-Gamma Distribution (User-define Distribution)
+fit_lgm <- survreg(form, dist = myloggamma, data = customerChurn)
+m <- forecast::accuracy(if_else(predict(fit_lgm, type="response") > UpLimit, UpLimit,
+                                predict(fit_lgm, type="response")), customerChurn$duration)
+SurvResults.df <- bind_rows(SurvResults.df, data.frame(Dist = stringr::str_to_title(fit_lgm$dist['name']), m,
+                                                       AIC = extractAIC(fit_lgm)[2], stringsAsFactors = FALSE))
+
+# Print of Models Performance Diagnostics by Distributions
+library('kableExtra') # Construct Complex Table with 'kable' and Pipe Syntax 
+library('formattable') # Create 'Formattable' Data Structures
+SurvResults.df %>% arrange(MAE) %>% 
+    mutate(Dist = cell_spec(Dist, "html",
+                            color = ifelse(AIC <= (arrange(., AIC)[1, 'AIC'] %>%  as.numeric), "red", "auto")),
+                            ME, RMSE, MAE, MPE,
+                            MAPE = color_tile("thistle1", "skyblue")(digits(MAPE, digits = 1)),
+                            AIC = color_bar("lightgreen")(accounting(AIC, digits = 0))) %>% 
+    kable(format = "html", digits = c(1, 1, 1, 1, 2, 1, 0),  longtable = TRUE, booktabs = TRUE, escape = F,
+          col.names = c("Name of Distribution", "Mean Error (ME)", "Root Mean Squared Error (RMSE)",
+          "Mean Absolute Error (MAE)", "Mean Percentage Error, % (MPE)",
+          "Mean Absolute Percentage Error, % (MAPE)" , "Akaike's An Information Criterion of Fitted Models (AIC)"),
+          caption="Models Performance Diagnostics by Distributions")  %>% 
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive", full_width = FALSE)) %>%
+      column_spec(7, width = "2 cm") %>%
+      add_header_above(c(" ", "Perfomance on Training Set" = 5, "Model's Performance" = 1)) %>% 
+      group_rows(index = c("Log" = 3, "Gaussian" = 4, "Exponential" = 3))
+
+```
+
+Оценим точность полученнных моделей по всему набору эмпирических данных, включая по традиционному набору показателей, добавив к нему AIC полученных моделей. При этом полученные по всем моделям предсказания предварительно правостороне цензуируем на 730 дней для приведеления в соответствие к авторским эмпирическим данным. Аналогичным образом я поступил в [третьей главе](https://rpubs.com/A_Rodionoff/SMCRM_Ch03), когда оценивал регрессионные модели выживания.
+
+```{r Plot of Parametric AFT Models, warning=FALSE, out.width = "150%"}
+# Plotting of Parametric AFT (Accelerated Failure Time) Models
+pct <- seq(0.0, .99, by=.001)
+
+# Set up for plot
+# plot(fit)
+# lines(predict(fit_lgm, newdata = as.list(fit_lgm$means[-1]), type = "quantile", p = pct), 1-pct, col = "red")
+# lines(predict(fit_lnor, newdata = as.list(fit_lnor$means[-1]), type = "quantile", p = pct), 1-pct, col = "blue")
+# lines(predict(fit_ray, newdata = as.list(fit_ray$means[-1]), type = "quantile", p = pct), 1-pct, col = "green")
+
+#  Graph of Kaplan–Meier Estimator
+survmod <- data.frame(time = c(predict(fit_lgm, newdata = as.list(fit_lgm$means[-1]), type = "quantile", p = pct),
+                         predict(fit_lnor, newdata = as.list(fit_lnor$means[-1]), type = "quantile", p = pct),
+                         predict(fit_ray, newdata = as.list(fit_ray$means[-1]), type = "quantile", p = pct)),
+                surv = rep(1 - pct, times = 3), 
+                models = rep(c("Log-Gamma", "Log-Normal", "Rayleigh"), each = length(pct)))
+fit0 <- data.frame(time = fit$time, surv = fit$surv, lower = fit$lower, upper = fit$upper)
+
+d <- density(filter(customerChurn, duration < 730)$duration, adjust = 0.4,
+             n = nrow(filter(customerChurn, duration < 730)))
+d.df <- data.frame(x = d['x'], y = d[['y']]) # Transformation from list to data.frame
+
+# Plotting of Kaplan–Meier Graph and the Parametric Models for AFT models
+# see https://whatalnk.github.io/r-tips/ggplot2-secondary-y-axis.nb.html
+ggplot() +
+    geom_line(data = fit0, aes_string(x = 'time', y = 'surv'), colour = 'blue') +
+    geom_ribbon(data = fit0, aes_string(x = 'time', ymin = 'lower', ymax = 'upper'), alpha = 0.1 , fill = 'blue')+
+    geom_line(data = survmod, aes_string(x = 'time', y = 'surv', color = 'models'), size = 1.2, alpha = 0.7) + 
+    geom_area(data = d.df, aes(x = x, y = d.df$y  * 180 / 1), fill = "coral", alpha = 0.25) +
+    scale_y_continuous(labels = scales::percent, name = "Proportion Surviving",          # the Primary axis of Y
+                      sec.axis = sec_axis(~. / 180 * 1, breaks = seq(0, 0.003, len = 4), # The Secondary axis of Y
+                                          name = "Density of Uncensored Events")) +
+    ggtitle("Comparison of the Kaplan–Meier Graph & Parametric Survival Models") +
+    scale_x_continuous(limits = c(0, max(fit$time)), name = 'Duration, Days')
+
+# data.frame(customerChurn$duration, survreg = predict(fit_lnor, type = "response")) %>% View
+
+```
+
+### Оценка точности полученных моделей выживания
+
+Полученные результаты измерения точности отсортируем по показателю *средней абсолютной  погрешности* **MAE**, которые в этой задаче измеряется в днях. Становится очевидным, что авторы выбрали логнормальное распределение исходя из наименьшего среди прочих моделей **AIC** `r sprintf("= %.0f", filter(SurvResults.df, Dist =='Lognormal')$AIC)`. Однако самым точным распределением по **MAE** на этом наборе правосторонних цензуированных данных оказалось близкое ему **лог-логистическое** распределение c `r sprintf("%.1f", filter(SurvResults.df, Dist =='Loglogistic')$MAE)` дней, хотя у него чуть меньшее **AIC** `r sprintf("= %.0f", filter(SurvResults.df, Dist =='Loglogistic')$AIC)`. Также неплохо показало применение распределения Рейля, чье *средняя абсолютная процентная погрешность* **MAPE** весьма точна (`r sprintf("%.1f", filter(SurvResults.df, Dist =='Rayleigh')$MAPE)`%), которое также показано на графике выше. При этом надо учитывать, что **AIC** рассчитывается по всей модели, а **точность для авторской задачи** лишь по нецензуированным данным.
+
+### Как это использовать?
+
+Модель  оценивается по AIC на всех данных, но их не цензуирует предварительно. Поэтому при формулировании задачи важно понимать, что явлется ее конечной целью, чтобы выбрать наиболее подходящие параметры для построения модели выживания или как в авторском случае модели оттока.
+
+---
+
+```{r The end of session}
+
+devtools::session_info()
+
+```
+
+## Выводы по главе 6
+
+Отклонение клиентов можно считать отрицательным явление в процессе удержания клиентов. Цель моделирования удержания заключается в том, чтобы понять влияние маркетинговых предикторов на продолжительность жизни клиента, в то время как моделирование оттока должно оценивать возможные причины, которые вызывают отказ покупателей или прекращение продолжительности жизни клиента. Моделирование оттока так же просто, как вероятностное моделирование, будь то клиенты уходят или нет, и его можно оценить с помощью логит-модели (логистической регрессии). Поскольку моделирование оттока также можно рассматривать как проблему с бинарной классификацией, возможно принятие методов из области машинного обучения, такие как искуственные нейронные сети, баггинговые и бустинговые ансамбли классификационых деревьев, случайный лес и классификаторы с учетом затрат (англ. "`cost-sensitive classifiers`"). Когда данные по оттоку находятся в форме панели, могут применяться методы анализа временных рядов для коррекции возможного соотношения продолжительности жизни и поведения клиента. Модели риска (которые используются в эмпирическом примере для этой главы) также подходят для моделирования оттока и функции риска от таких распределений как экспоненциальное, Вейбула, логнормальное  или иные, выбрать их можно при  спецификации модели (выше я остановился на процедуре подбора подходящего распределения, хотя авторы этот вопрос опустили в своей книге). Модель пропорционального риска (англ. "`Proportional Hazards Model`") часто используется, и она способна оценивать влияние вариабельных во времени предикторов на коэффициент риска.

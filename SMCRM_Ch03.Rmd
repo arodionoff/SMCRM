@@ -1,0 +1,895 @@
+---
+title: "Statistical Methods in Customer Relationship Management"
+subtitle: "Chapter 3. Customer acquisition"
+author: "Alexander Rodionov"
+date: "31 мая 2018 г."
+output: 
+  html_document:
+    highlight: tango 
+    theme: readable
+    code_folding: hide
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 6.3
+    toc: yes
+    toc_float: no
+    number_sections: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 120)
+```
+
+Мы начинаем рассматриваем в **R** примеры **SAS** на наборах данных из книги Kumar V., Petersen Andrew J. "Statistical Methods in Customer Relationship Management".
+
+# Глава 3. Привлечение потребителей
+
+В этой главе начинается обсуждение первого этапа CRM - приобретения новых клиентов. Цели моделирования привлечения клиентов включают в себя определение правильных клиентов, прогнозирование того, будут ли клиенты реагировать на рекламные кампании компании, планирование количества новых клиентов и анализирование краткосрочных и долгосрочных последствий маркетинговых и других бизнес-переменных при получении таких клиентов. Спецификации модели, которые рассматриваются в этой главе, включают логит, пробит, Тобит, линейную регрессию, лог-линейную модель, векторную авторегрессию, функцию риска (англ. "`hazard function`") и исчисление решений (англ. "`decision calculus`"). Помимо изучения аспектов моделирования привлечения клиентов, в этой главе авторы также рассматривают большое количество исследований, в которых основное внимание уделяется влиянию маркетинговых переменных в качестве драйверов или предикторов приобретения клиентов.
+
+На рисунке представлены вопросы, которые необходимо решить в эконометрических и статистических моделях удержания клиентов.
+
+```{r Picture 1, echo=FALSE, out.width=1155, fig.cap = 'The Picture 1'}
+
+knitr::include_graphics("C:/Soft/R/Examples/CRM/SMCRM_Ch03-1.png")
+
+```
+
+Решение этих вопросов мы вместе с авторами книги рассмотрим ниже.
+
+## Данные для эмпирических примеров
+
+Имеются набор данных "`customerAcquisition`" о 500 потенциальных потребителей типичной B2B компании, содержащие 16 признаков:
+
+| Переменные      | Описание                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| Customer        | Номер потребителя (от 1 до 500) |
+| Acquisition     | **1**, если клиент был приобретен, **0** в противном случае |
+| First_Purchase  | Долларовая стоимость первой покупки (**0**, если клиент не был приобретен) |
+| CLV             | Прогноз пожизненной ценности клиента. Это **0**, если клиента не было или уже ушел в отток ('000) |
+| Duration        | Время в днях, когда компании была или продолжает быть клиентом, цензуированная до 730 дней |
+| Censor          | **1**, если клиент оставался в конце окна наблюдения, **0** в противном случае |
+| Acq_Expense     | Долларовые расходы на маркетинг по привлечению клиента |
+| Acq_Expense_SQ  | Квадрат расходов на привлечение |
+| Industry        | **1**, если клиент в секторе **B2B**, **0** в противном случае, т. е. **B2C** |
+| Revenue         | Годовой доход от продаж компании (млн долл.) |
+| Employees       | Количество сотрудников в компании |
+| Ret_Expense     | Долларовые расходы на маркетинг по удержание клиента |
+| Ret_Expense_SQ  | Квадрат расходов на удержание |
+| Crossbuy        | Количество категорий товаров / услуг, приобретенных клиентом |
+| Frequency       | Количество покупок клиента во время окна наблюдения |
+| Frequency_SQ    | Квадрат количества покупок |
+
+Авторы настаивают на использовании как линейных, так и квадратичных величин расходов, поскольку ожидают, что для каждого дополнительного доллара, потраченного на усилия для приобретения и удержания для данной потенциального клианта, будет проявлятся закон убывающей доходности (англ. "`Diminishing Returns`") выразающийся в том, что дополнительные затраты дают всё меньший объём дополнительной выручки.
+
+```{r Ch03: Customer Acquisition - Data}
+library('tidyverse')
+library('caret')
+library('car')
+utils::data('customerAcquisition', package = 'SMCRM')
+
+# Check for Class Imbalances
+writeLines("Distribution Variable 'Acquisition' by Response Levels")
+customerAcquisition$acquisition %>%
+  factor() %>%
+    table() # %>%
+      # prop.test()
+
+```
+
+## Эмпирический пример: вероятность отклика на привлечение клиента
+
+Построим регрессионую модель с **логистическим распределением** отклика по набору предикторов согласно авторам книги. Обратим внимание, что имеется определенная несбалансированность классов, т.е. компаний, которые стали клиентами, заметно больше, чем отказавшихся ими стать.
+
+Логистическая модель обычно представляется как:
+
+<!-- https://arachnoid.com/latex/ -->
+
+$$ \displaystyle \large \pi(Y)=\frac{\exp(\beta_0+\beta_1X)}{1+\exp(\beta_0+\beta_1X)} \hspace{.5 in} [1]$$
+или переходя в обычной линейной модели:
+
+$$ \displaystyle \large \ln\left(\frac{\pi(Y)}{1-\pi(Y)}\right)=\beta_0+\beta_1X  \hspace{.5 in} [2]$$
+
+Поэтому сам логит получается:
+
+$$ \displaystyle \large \Pr(Y=1 \mid X) = [1 + e^{-X'\beta}]^{-1} \hspace{.5 in} [3]$$
+
+### Построение и верификация модели *привлечения клиента* (первый этап) {.tabset}
+
+#### Logit
+
+```{r Ch03 : Logistic Regression, warning=FALSE}
+# Fit Logistic Regression Model for Customer Acquisition by Authors
+# https://stats.idre.ucla.edu/sas/dae/logit-regression & https://stats.idre.ucla.edu/r/dae/logit-regression
+
+Ch03.logit <- glm(acquisition ~ acq_expense + acq_expense_sq + industry + revenue + employees,
+             data = customerAcquisition, family = binomial(link = 'logit'))
+summary(Ch03.logit)
+writeLines(sprintf("-2 Log L of Intercept and Only Covariates: %.3f", -2 * logLik(Ch03.logit)[1]))
+writeLines(sprintf("                  AIC (smaller is better): %.3f", extractAIC(Ch03.logit)[2]))
+
+# Odds Ratio Estimates and 95% CI
+writeLines("\n Odds Ratio Estimates and 95% CI")
+car::Confint(Ch03.logit) %>%
+  exp() %>%
+    arm::pfround(digits = 3)
+
+writeLines("\n Wald test of predictors")
+car::Anova(Ch03.logit, type="II", test="Wald")
+writeLines("\n Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03.logit) # Variance Inflation Factors - if vif() > 2 - feature has multicollinearity 
+
+writeLines("\n Logit Model: Association of Predicted Probabilities and Observed Responses \n")
+prob <- predict(Ch03.logit, newdata = customerAcquisition, type = "response") 
+caret::confusionMatrix(data = ifelse(prob > 0.5, "1", "0") %>% factor,
+                       reference = customerAcquisition$acquisition %>% factor,
+                       positive = "1", mode = "everything")
+```
+
+В качестве меры точности модели мы рекомендует коэффициент **Cohen's Kappa**, так как в задаче наблюдается проблема *несбалансированности классов*. Коэффициент аккуратности из-за этой проблемы тут не применим. Коэффициент **Kappa** - мера того, насколько близко наблюдения, классифицированные входе машинного обучения, т.е. *предсказанные метки* классов, соответствуют *истинному разбиению* на классы, контролируя точность обученного классификатора. Более того, что показатель **Kappa** проливает свет на то, как обучился сам классификатор, коэффициент для одной модели напрямую сопоставим со коэффициентами для любой другой модели, применяемой для одной и той же задачи классификации, включая  классификацию по многим классам.
+
+В статистической практике решения классификационных задач считается , что **Kappas** > 0,80 характеризует *отличную* модель; интервал от 0,40 до 0,80, справедливо относить к *хорошему* классификатору, а < 0,40 - ко *слабым* в прогностическом отношении результатам, хотя их и можно применять для описательных целей.
+
+Теперь обратимся к **пробит-модели**, которую авторы выбралди в качестве основной на первом этапе этого моделирования.
+
+#### Probit
+
+Подобно модели логита, модель **пробит** (англ. "`Probit`"), основанная на **нормальном распределении**, часто используется для моделирования двоичных откликов, особенно в тех случаях, когда есть желание оценить модель двух потоков. Модель пробита, еще более сложная для оценки из-за отсутствия решения с замкнутой формой, теоретически привлекательна в двухэтапной структуре моделирования из-за стандартного нормального распределения. Авторы пишут, что это делает его полезным, когда второй этап представляет собой линейную регрессию строемую **методом наименьших квадратов** с нормально распределенным остатками.
+
+Probit: $\Pr(Y=1 \mid X) = \Phi(X'\beta)$
+
+```{r Ch03 : Probit Regression}
+# Fit Probit Model for Customer Acquisition by Authors
+# https://stats.idre.ucla.edu/sas/dae/probit-regression & https://stats.idre.ucla.edu/r/dae/probit-regression
+Ch03.probit <- glm(acquisition ~ acq_expense + acq_expense_sq + industry + revenue + employees,
+             data = customerAcquisition, family = binomial(link = 'probit'))
+summary(Ch03.probit)
+writeLines(sprintf("-2 Log L of Intercept and Only Covariates: %.3f", -2 * logLik(Ch03.probit)[1]))
+writeLines(sprintf("                  AIC (smaller is better): %.3f", extractAIC(Ch03.probit)[2]))
+
+writeLines("\n Wald test of predictors")
+car::Anova(Ch03.probit, type="II", test="Wald")
+writeLines("\n Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03.probit) # Variance Inflation Factors - if vif() > 2 - feature has multicollinearity 
+
+writeLines("\n Probit Model: Association of Predicted Probabilities and Observed Responses \n")
+prob <- predict(Ch03.probit, newdata = customerAcquisition, type = "response") 
+caret::confusionMatrix(data = ifelse(prob > 0.5, "1", "0") %>% factor,
+                       reference = customerAcquisition$acquisition %>% factor,
+                       positive = "1", mode = "everything")
+```
+
+Иначе выражаясь, логистическая функция имеет слегка более плоские хвосты у нуля и единицы, тогда как кривая пробита приближается к осям резче, чем логит.
+
+Логистическую регрессию лучше интерпретитовать, чем пробит, поскольку она может рассматриваться как логарифмические коэффициенты отношений шансов.
+
+#### Probit (AR version)
+
+Вместе с тем очевидно, что предиктор `industry` не значим в обоих бинарных регрессиях. Хотя авторы в примечании на странице 41 упоминают об этом, но никаких шагов по устранению этого фактора не предпринимают.
+
+Более того, проверка по **VIF** (англ. "`Variance Inflation Factors`") демонстрирует большие значения по признакам `acq_expense` и `acq_expense_sq`. Однако, принимая во внимание проявление *закона убывающей доходности* мы должны оставить оба *мультиколлинеарных*  предиктора в этой модели. Теперь бинарную модель мы проверяем более тщательно.
+
+```{r Ch03 : Probit Improved, warning=FALSE}
+# Fit Probit Regression Model for Customer Acquisition (Improved)
+uno = 'probit'
+set.seed(2018) #From random.org
+(Ch03pr.AR <- train(factor(acquisition) ~ acq_expense_sq + revenue + employees, metric = 'Kappa',
+                  data = customerAcquisition, method = "glm", family = binomial(link = uno)))#,
+                  # trControl = trainControl(method = "none", number = 1)))
+summary(Ch03pr.AR)
+# Odds Ratio Estimates and 95% CI
+writeLines("\n Odds Ratio Estimates and 95% CI")
+car::Confint(Ch03pr.AR$finalModel) %>%
+  exp() %>%
+    arm::pfround(digits = 3)
+
+# Logistic regression diagnostics
+writeLines("\n Wald test of predictors")
+car::Anova(Ch03pr.AR$finalModel, type="II", test="Wald")
+writeLines("\n Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03pr.AR$finalModel) # Variance Inflation Factors - if vif() > 2  - feature has multicollinearity
+writeLines("\n Variable Importance for Model \n")
+caret::varImp(Ch03pr.AR) %>% .$importance %>% print.AsIs()
+
+# # Create the scatter plots Logit versus model predictors
+# # prob <- predict(Ch06lg.AR, newdata = customerAcquisition, type = "prob")[, "1"]
+# #     mutate(logit = log(prob / (1 - prob))) %>%
+
+# Create the scatter plots Probit versus model predictors
+predictors <- Ch03pr.AR$coefnames
+Ch03pr.AR$trainingData %>%
+  dplyr::select(one_of(predictors)) %>%
+    mutate(link = predict(Ch03pr.AR$finalModel, newdata = customerAcquisition, type = "link")) %>%
+      gather(key = "predictors", value = "predictor.value", -link) %>%
+        ggplot(aes(predictor.value, link))+
+          geom_point(size = 0.5, alpha = 0.5) +
+          geom_smooth(method = "loess") +
+          facet_wrap(~ predictors, scales = "free_x") +
+          ylab(stringr::str_to_title(uno))
+
+# Plot matrix of statistical model diagnostics
+GGally::ggnostic(Ch03pr.AR$finalModel, title = paste(paste(formula(Ch03pr.AR)[c(2, 1, 3)], collapse = " ")))
+
+# wide variety of diagnostic plots for checking the quality of regression fit
+# https://bookdown.org/jefftemplewebb/IS-6489/logistic-regression.html
+car::influenceIndexPlot(Ch03pr.AR$finalModel)
+
+writeLines("\n Improved Probit Model: Association of Predicted Probabilities and Observed Responses \n")
+caret::confusionMatrix(data = predict(Ch03pr.AR, newdata = customerAcquisition),
+                       reference = customerAcquisition$acquisition %>% factor,
+                       positive = "1", mode = "everything")
+
+# qplot(`Observed Classes`, `Predicted Classes`, 
+#       data=bind_cols(`Observed Classes`= factor(customerAcquisition$acquisition),
+#                      `Predicted Classes` = predict(Ch03pr.AR, newdata = customerAcquisition)),  
+#       colour= `Observed Classes`, geom = c("boxplot", "jitter"),
+#       main = "Predicted Classes vs. Observed Classes", xlab = "Observed Classes", ylab = "Predicted Classes")
+
+vcd::mosaic( ~ Predict_Response + response, data = data.frame(response = factor(customerAcquisition$acquisition),
+  Predict_Response = predict(Ch03pr.AR, newdata = customerAcquisition)),
+  labeling_args = list(set_varnames = c(Predict_Response = "Predicted Response to Offer",
+    response = "Actual Response to Offer")),
+  highlighting = c("Predict_Response", "response"),
+  highlighting_fill = c("chartreuse", "cornsilk", "cornsilk", "chartreuse"),
+  rot_labels = c(left = 0, top = 0),
+  pos_labels = c("center", "center"),
+  offset_labels = c(0.0, 0.6))
+
+```
+
+Полученая улучшенная регрессия без фактора `industry` (**B2B** либо **B2C**) мне представляется более надежной, так как избавилась от малозначимого предиктора.
+
+### Как это использовать?
+
+Авторы полагают, что независимо от того, используется логит или пробит-структура для моделирования вероятности ответа, вывод модели весьма полезен для определения того, какой клиент может приобрести фирма. Кроме того, результаты модели бинарного выбора могут служить драйверами приобретения клиентов, которые полезны для менеджеров при принятии решений в будущих кампаниях по привлечению клиентов.
+
+Теперь можно узнать, как изменения в расходах на приобретение и изменения характеристик потенциальных клиентов могут либо увеличить, либо уменьшить нашу вероятность заполучить потребителя. Эта информация может дать значительную информацию руководителям, которым поручено определить оптимальный объем ресурсов, которые необходимо потратить на привлечение клиентов.
+
+## Эмпирический пример: величина первоначального заказа вновь привлеченных клиентов 
+
+Многие фирмы поняли, что недостаточно просто сосредоточиться только на попытке приобрести как можно больше клиентов, не заботясь о той ценности, которую клиент может предоставить. Исследования в области маркетинга показали, что первоначальная стоимость заказа может быть ценным предиктором для будущей стоимости клиента или, по крайней мере, оправдать сумму денег, затрачиваемую на привлечение клиента. Таким образом, может быть полезно понять драйверы значения первоначальная заказа и, в свою очередь, иметь возможность прогнозировать ожидаемое значение первоначального заказа каждого клиента.
+
+Таким образом, авторы предлагают двухэтапную модель прогноза:
+
+$$ \displaystyle \large E(Initial \enspace Order \enspace Quantity) = P(Acquisition = 1) * E(First \enspace Purchase | Acquisition = 1)  \hspace{.5 in} [4] $$
+И если с моделью, по которой рассчитывается количествм вновь привлеченных клиентов, авторы уже определились остается второй этап.
+
+Поскольку первый этап этой модели авторами уже пройден и они остановились на пробит-модели. Когда мы оцениваем второй этап двухэтапной модели, мы получаем нижеследующие оценки параметров линейной регрессии уравнений. Обращаем внимание, что в построении этой модели участвуют только привлеченные клиенты (`Acquisition == 1`).
+
+### Построение и верификация *величины первоначального заказа*  (второй этап) {.tabset}
+
+#### Linear
+
+```{r Ch03 : Linear Regression}
+# Fit Linear Regression Model for Initial Order Quantity by Authors
+# https://stats.idre.ucla.edu/sas/webbooks/reg/
+
+# SAS Code: imr_acquisition = (pdf(’Normal’, xb_probit))/(probnorm(xb_probit));
+xbeta <- predict(Ch03.probit, newdata = customerAcquisition, type = "link")
+customerAcquisition <- customerAcquisition %>% 
+  mutate(imr_acquisition = dnorm(xbeta) / pnorm(xbeta)) #  Cumulative normal pdf
+    
+(Ch03.linear <- lm(first_purchase ~ acq_expense + acq_expense_sq + industry + revenue + employees +  imr_acquisition, data = filter(customerAcquisition, acquisition == 1) )) %>%
+  summary
+
+writeLines("Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03.linear) # Variance Inflation Factors - if vif() > 2 - feature has multicollinearity 
+
+```
+
+В этой линейной модели также наблюдается несколько малозначимых предикторов и явно обозначенная мультиколлинеарность признаков. При все этом качество линейной модели авторов очень высокое. Однако нам необходимо убедиться в ее устойчивости, ведь такое большое качество может быть порождением **переобучения** модели на конкретных данных.
+
+#### Linear (AR version)
+
+Теперь попробуем исключить из линейной модели незначимыq фактор `industry` и провести построение устойчивой регресии посредством бустинга, что позволит избежать проявления переобучения при построении модели.
+ 
+```{r Ch03 : Linear Regression Improved, warning=FALSE}
+# Fit Linear Regression Model for Initial Order Quantity (Improved)
+uno = 'y_hat'
+
+set.seed(2018)
+(Ch03ln.AR <- train(first_purchase ~ acq_expense + acq_expense_sq + revenue + employees +  imr_acquisition,
+                    data = filter(customerAcquisition, acquisition == 1), method = "lm"))#,
+                    # trControl = trainControl(method = "none", number = 1)))
+summary(Ch03ln.AR)
+# Coefficient Estimates and 95% CI
+writeLines("\n Coefficient Estimates and 95% CI")
+car::Confint(Ch03ln.AR$finalModel) %>%
+  exp() %>%
+    arm::pfround(digits = 3)
+
+# Linear regression diagnostics
+writeLines("\n Chisq test of predictors")
+car::Anova(Ch03ln.AR$finalModel, type="II", test="Chisq")
+writeLines("\n Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03ln.AR$finalModel) # Variance Inflation Factors - if vif() > 2  - feature has multicollinearity
+writeLines("\n Variable Importance for Model \n")
+caret::varImp(Ch03ln.AR) %>% .$importance %>% print.AsIs()
+
+# Create the scatter plots Linear Model versus model predictors
+# https://stats.idre.ucla.edu/r/seminars/ggplot2_intro/
+predictors <- Ch03ln.AR$trainingData %>% colnames(.) %>% .[-1]
+Ch03ln.AR$trainingData %>% 
+  rename(y_hat = `.outcome`) %>% 
+    gather(key = "predictors", value = "predictor.value", -y_hat) %>%   
+      ggplot(aes(predictor.value, y_hat))+
+        geom_point(size = 0.5, alpha = 0.5) +
+        geom_smooth(method = "loess") +
+        facet_wrap(~ predictors, scales = "free_x") +
+        ylab(stringr::str_to_title(uno))
+
+# Plot matrix of statistical model diagnostics
+GGally::ggnostic(Ch03ln.AR$finalModel, title = paste(paste(formula(Ch03ln.AR)[c(2, 1, 3)], collapse = " ")))
+
+# wide variety of diagnostic plots for checking the quality of regression fit
+car::influenceIndexPlot(Ch03ln.AR$finalModel)
+
+# Goodness-of-fit of normal distributions to residuals of Linear Model (if Kolmogorov-Smirnov statistic < 0.05)
+residuals(Ch03ln.AR) %>% fitdistrplus::fitdist("norm") %>%  fitdistrplus::gofstat()
+
+``` 
+
+Улучшенная модель без признака `industry` стала значимее, ни сколько не потеряла в своей точности, но точно приобрела устойчивость после бустинга. Следует признать, что остатки линейной модели и в самом деле распределяются по нормальному распределению, поскольку значение статистики Колмогорова-Смирнова **p < 0.05**.
+
+#### Error of Linear Model
+
+Последний шаг - сравнить предсказанные значения `First_Purchase` по предложенной авторами модели, а также моей улучшенной модели с фактическими значениями. При этом не забываем, что уравнение у авторов задано в два этапа:
+
+$$  \displaystyle \large E(Initial \enspace Order \enspace Quantity) - P(Acquisition = 1) * E(First \enspace Purchase | Acquisition = 1) \hspace{.5 in} [5] $$
+
+Авторы делают это, вычисляя среднее абсолютное отклонение (MAD или MAE) и среднюю абсолютную процентную погрешность (MAPE).
+
+```{r Ch03 : Error of Linear Model}
+# Computing the Mean Absolute Deviation (MAD) and Mean Absolute Percent Error (MAPE)
+# SAS Code: pred_fp = probnorm(xb_probit) * (xbeta);
+
+with(filter(customerAcquisition, acquisition == 1), {
+  pred_fp <- pnorm(xbeta[ifelse(customerAcquisition$acquisition == 1, TRUE, FALSE)]) *
+               predict(Ch03.linear) #, newdata = filter(customerAcquisition, acquisition == 1))
+  # mad = mean(abs(first_purchase - pred_fp));
+  writeLines(sprintf("Mean Absolute Deviation (MAD): %.0f долл.", mean(abs(first_purchase - pred_fp))))
+  
+  # mape = mean(abs(first_purchase - pred_fp)/first_purchase);
+  writeLines(sprintf("Mean Absolute Percent Error (MAPE): %.3f %% \n", mean(abs(first_purchase - pred_fp) / first_purchase) * 100))
+  
+  pred_fp <- pnorm(xbeta[ifelse(customerAcquisition$acquisition == 1, TRUE, FALSE)]) *
+               predict(Ch03ln.AR, newdata = filter(customerAcquisition, acquisition == 1))
+  # mad = mean(abs(first_purchase - pred_fp));
+  writeLines(sprintf("Improved Mean Absolute Deviation (MAD): %.0f долл.", mean(abs(first_purchase - pred_fp))))
+  
+  # mape = mean(abs(first_purchase - pred_fp)/first_purchase);
+  writeLines(sprintf("Improved Mean Absolute Percent Error (MAPE): %.3f %% \n", mean(abs(first_purchase - pred_fp) / first_purchase) * 100))
+  
+  # mad1 = mean(abs(first_purchase - mean(first_purchase));
+  mad1 <- mean(abs(first_purchase - mean(first_purchase)))
+  writeLines(sprintf("Naive Mean Absolute Deviation (MAD1): %.0f долл.", mad1))
+  
+  # mape1 = mean(abs(first_purchase - mean(first_purchase))/first_purchase);
+  mape1 <- mean(abs(first_purchase - mean(first_purchase)) / first_purchase) * 100
+  writeLines(sprintf("Naive Mean Absolute Percent Error (MAPE1): %.3f %%", mape1))
+  })
+```
+
+Если бы авторы вместо построения этой двухэтапной модели просто использовали *наивный подход* - применяли для прогноза среднее значение `first_purchase` (`r sprintf("%.2f", filter(customerAcquisition, acquisition == 1) %>% .$first_purchase %>%  mean)` долл.)то, они бы обнаружили, что *наивный* MAD1 и *наивный* MAPE1. Таким образом, авторская модель сформировала лучший прогноз значений начального стоимости заказа, чем *наивный* усредненный подход.
+
+### Как это использовать?
+
+Благодаря этой двухэтапной модели менеджмент может точнее прогнозировать размеры первоначального заказа вновь привлеченных клиентов, что существенно улучшает аккуратность планирования доходов от поступлений новых потребителей. При этом руководство может четко представлять драйверы, которые влияют на величину первого заказа вновь привлеченных клиентов.
+
+## Эмпирический пример: Продолжительность / время
+
+Приобретение клиентов имеет ключевое значение для многих фирм. Тем не менее, многие фирмы также хотят смотреть за пределы точки приобретения и отвечать на такие вопросы, как «Как долго будет вновь приобретенный клиент по-прежнему будет оставаться клиентом?» Итак, в этом примере авторы попытаются выявить драйверы новой продолжительности работы с клиентами. Мы ожидаем, что продолжительность обслуживания клиентов будет зависеть от характеристик взаимоотношений с клиентами и информации о фирме. Но мы также хотим узнать, влияет ли попытка привлечения фирмы на продолжительность сотрудничества каждого нового клиента с фирмой. В конце этого примера авторы объяснят:
+
+1. Определить драйверы продолжительности жизни нового клиента.
+
+2. Предсказывать продолжительность жизни каждого нового клиента.
+
+Информация, необходимая для этой модели, включает следующий список переменных:  
+
+| Переменные      | Описание                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| **Зависимая переменная** |  |
+| Duration        | Время в днях, когда компании была или продолжает быть клиентом, цензуированная до 730 дней |
+| **Предикторы**          |  |
+| Acq_Expense     | Долларовые расходы на маркетинг по привлечению клиента |
+| Acq_Expense_SQ  | Квадрат расходов на привлечение |
+| Ret_Expense     | Долларовые расходы на маркетинг по удержание клиента |
+| Ret_Expense_SQ  | Квадрат расходов на удержание |
+| Crossbuy        | Количество категорий товаров / услуг, приобретенных клиентом |
+| Frequency       | Количество покупок клиента во время окна наблюдения |
+| Frequency_SQ    | Квадрат количества покупок |
+| Industry        | **1**, если клиент в секторе **B2B**, **0** в противном случае, т. е. **B2C** |
+| Revenue         | Годовой доход от продаж компании (млн долл.) |
+| Employees       | Количество сотрудников в компании |
+| *Censor*          | **1**, если клиент оставался в конце окна наблюдения, **0** в противном случае |
+
+В этом случае данные выборки взяты из фирмы, работающей на корпоративном рынке, которая фактически наблюдает, когда клиент уходит в отток до истечения срока договора. Из списка переменных мы видим, что мы имеем одну зависимую переменную (`Duration`), которая подвергается цензуированию справо. Окно наблюдения за клиентами составляет всего два года (730 дней) после того, как были заклюбчен договор. Таким образом, мы наблюдаем, как клиент покидает компанию, если это произойдет до конца второго года. В результате данные для `Duration` подвергаются правосторонней цензуированию на 730 день - это означает, что любой клиент, значение `Duration` которого равен 730 в таблице данных, еще не покинул фирму в конце окна наблюдения. У авторов также есть 10 независимых переменных, которые мы надеемся, что это объяснят изменения в продолжительности сотрудничества каждого нового клиента с фирмой.
+
+### Множительные оценки Каплана-Мейера {.tabset}
+
+Чтобы дать оценку функции выживания графическим методом и определить разницу между различными претикторами и их ковариатами полезно построить кривые Каплана—Мейера (англ. "`Kaplan–Meier Estimator`"). Для построения подобных кривых необходимо обратиться к важнейшему пакету в **R** по тематике анализа выживания -  [`survival`](http://cran.rstudio.com/web/packages/survival), а также специализированным графикам из пакета  [`survminer`](http://cran.rstudio.com/web/packages/survminer).
+
+#### KM Curve by Duration
+
+```{r Ch03 : Kaplan–Meier Curve - duration, warning=FALSE, out.width = "300%"}
+# survminer: Survival Analysis and Visualization
+# http://www.sthda.com/english/wiki/survival-analysis-basics & https://habr.com/post/348754/
+library('survival')
+library('survminer')
+fit <- survival::survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ 1,
+                         data = filter(customerAcquisition, acquisition == 1))
+
+#  Graph of Kaplan–Meier Estimator
+ggsurvplot(fit, data = filter(customerAcquisition, acquisition == 1), # survfit object with calculated statistics.
+           pval = TRUE,             # show p-value of log-rank test.
+           conf.int = TRUE,         # show confidence intervals for 
+                                    # point estimates of survival curves.
+           fontsize = 2,
+           xlim = c(0, max(customerAcquisition$duration)), 
+                                    # present narrower X axis, but not affect survival estimates.
+           xlab = "Time in days",   # customize X axis label.
+           break.time.by = 30,     # break X axis in time intervals by 30 days.
+           ggtheme = theme_light(), # customize plot and risk table with a theme.
+           risk.table = "abs_pct",   # to show both absolute number and percentage
+          risk.table.y.text.col = T,# colour risk table text annotations.
+          risk.table.height = 0.25, # the height of the risk table
+          risk.table.y.text = FALSE,# show bars instead of names in text annotations
+                                    # in legend of risk table.
+          surv.median.line = "hv"#,  # add the median survival pointer.
+          # legend.labs = 
+          #   c("B2C", "B2B")    # change legend labels.
+) 
+
+```
+
+Очевидно, что половину клиентов завершили сотрудничество к 615 суткам.
+
+#### KM Curve by Duration vs industry
+
+Важно рассмотреть как ведут себя разные сегменты клиентов (страты) в ходе сотрудничества с фирмой. Например, страты **B2C** и **B2B**.
+
+```{r Ch03 : Kaplan–Meier Curve - duration vs industry, out.width = "150%"}
+fit <- survival::survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ industry, data = filter(customerAcquisition, acquisition == 1))
+
+#  Graph of Kaplan–Meier Estimator
+ggsurvplot(fit, data = filter(customerAcquisition, acquisition == 1), # survfit object with calculated statistics.
+           pval = TRUE,             # show p-value of log-rank test.
+           conf.int = TRUE,         # show confidence intervals for 
+                                    # point estimates of survival curves.
+           palette = c("coral", "#E7B800", "#2E9FDF"),
+           xlim = c(0, max(customerAcquisition$duration)), 
+           xlab = "Time in days",   # customize X axis label.
+           break.time.by = 30,     # break X axis in time intervals by 30 days.
+           ggtheme = theme_light(), # customize plot and risk table with a theme.
+           fontsize = 2.5,
+           add.all = TRUE,          # add the survival curve of pooled patients
+            risk.table = TRUE,       # show risk table.
+          risk.table.y.text.col = T,# colour risk table text annotations.
+          risk.table.height = 0.25, # the height of the risk table
+          risk.table.y.text = FALSE,# show bars instead of names in text annotations
+                                    # in legend of risk table.
+          surv.median.line = "hv",  # add the median survival pointer.
+          cumevents = TRUE, 
+          legend.labs = 
+            c("All", "B2C", "B2B")    # change legend labels.
+) 
+
+```
+
+На графике видно, что время сотрудничества у компаний "B2C" значимо ниже, чем у продолжительно сотрудничающих "B2B".
+ 
+#### KM Curve by Duration vs crossbuy
+
+```{r Ch03 : Kaplan–Meier Curve - duration vs crossbuy, message=FALSE, out.width="150%"}
+# survminer: Survival Analysis and Visualization
+# http://www.sthda.com/english/wiki/survival-analysis-basics & https://habr.com/post/348754/
+fit <- survival::survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ crossbuy, data = filter(customerAcquisition, acquisition == 1))
+
+#  Graph of Kaplan–Meier Estimator
+ggsurvplot(fit, data = filter(customerAcquisition, acquisition == 1), # survfit object with calculated statistics.
+           pval = TRUE,             # show p-value of log-rank test.
+           conf.int = FALSE,         # show confidence intervals for 
+                                    # point estimates of survival curves.
+           xlim = c(0, max(customerAcquisition$duration)), 
+           xlab = "Time in days",   # customize X axis label.
+           break.time.by = 30,     # break X axis in time intervals by 30 days.
+           ggtheme = theme_light(), # customize plot and risk table with a theme.
+           fontsize = 2.5,
+           add.all = TRUE,          # add the survival curve of pooled patients
+           surv.median.line = "hv"  # add the median survival pointer.
+) 
+
+# # Tests if there is a difference between two or more survival curves using the G-rho family of tests
+# x <- survival::survdiff(Surv(time = duration, event = (censor == 0), type = "right") ~ crossbuy, data = filter(customerAcquisition, acquisition == 1))
+
+```
+
+Изменение продолжительности в зависимости от количества категорий товаров / услуг, приобретенных клиентом, `crossbuy` уже не столь велико - p = 0.8.
+
+### Построение и верификация модели *времени ускоренного отказа* {.tabset}
+
+Чтобы определить драйверы продолжительности работы клиента, мы используем модель Времени Ускореннного Отказа (англ. "`Accelerated Failure Time (AFT) Model`"). В этом случае имеется следующее уравнение:
+
+$$ \displaystyle \large \ln(Duration) = X'\beta + \sigma \varepsilon. \hspace{.5 in} [6]$$
+где $\ln(Duration)$ - натуральный логарифм времени, в течение которого клиент сотрудничал с фирмой;
+
+$X'$ - матрица из 10 независимых переменных;
+
+$\beta$ - вектор коэффициентов;
+
+$\sigma$ - параметр масштаба;
+
+$\varepsilon$ - ошибки модели.
+
+Авторы оценивают модель, полагая, что $\varepsilon$ следует **распределению Вейбулла** (англ. "`Weibull distribution`") - одному из распространенных, наряду с *экспоненциальным* и распределение *Гомпертца*, среди моделей времени ускоренного отказа. 
+
+Функции плотности вероятности распределения Вейбулла -
+
+$$ \displaystyle \large f(x; \alpha, \gamma) = \begin{cases}
+\frac{\gamma}{\alpha}\left(\frac{x}{\alpha}\right)^{\gamma - 1}e^{-(x/\alpha)^{\gamma}} & x\geq0 ,\\
+0 & x<0
+\end{cases} \hspace{.5 in} [7] $$
+
+Авторы оценивают модель только с `r nrow(filter(customerAcquisition, acquisition == 1))` перспективными потребителями, которые были привлечены в качестве клиентов  (`Acquisition == 1`).
+
+#### Duration Models
+
+
+```{r Ch03: Duration Models, warning=FALSE}
+# Censored Regression of Accelerated Failure Time (AFT) model on Time-to-Failure Data
+# https://stats.idre.ucla.edu/sas/dae/tobit-analysis/ & https://stats.idre.ucla.edu/r/dae/tobit-models/  & http://rpubs.com/Joaquin_AR/381600
+
+UpLimit <- max(customerAcquisition$duration)
+
+library('VGAM') # Vector Generalized Linear and Additive Models
+# Left- & Right-Censored Tobit (Normally distributed error term) AFT Model from 'VGAM' package
+(Ch03.tb <- VGAM::vglm(duration ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + crossbuy +
+                       frequency + frequency_sq + industry + revenue + employees,
+                       family = tobit(Lower = 0, Upper = UpLimit, type.fitted = "censored"),
+                       data = filter(customerAcquisition, acquisition == 1))) %>%
+  summary
+
+# # Censored Normal Distribution of error term Or Censored Tobit
+# Extra <- with(filter(customerAcquisition, acquisition == 1),
+#               list(leftcensored = 0, rightcensored = (duration == UpLimit)))
+# 
+# (Ch03.nr <- VGAM::vglm(duration ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + crossbuy +
+#                        frequency + frequency_sq + industry + revenue + employees,
+#                        family = cens.normal(), extra = Extra,
+#                        data = filter(customerAcquisition, acquisition == 1))) %>%
+#   summary
+
+# Right-Censored Rayleigh Distribution (special case of Weibull distribution with the "shape" parameter gamma = 2)
+Extra = with(filter(customerAcquisition, acquisition == 1), list(rightcensored = (duration == UpLimit) ))
+
+(Ch03.ry <- VGAM::vglm(duration ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + crossbuy +
+                       frequency + frequency_sq + industry + revenue + employees,
+                       family = cens.rayleigh, extra = Extra,
+                       data = filter(customerAcquisition, acquisition == 1))) %>%
+  summary
+
+# Weibull distribution do not to handle other censoring situations yet (except gamma = 2)
+# (Ch03.ln <- VGAM::vglm(duration ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + crossbuy + frequency + frequency_sq + industry + revenue + employees, family = weibullR(), data = filter(customerAcquisition, acquisition == 1))) %>% summary
+
+```
+
+К сожалению, в моем распоряжении оказалась только один пакет, который способен построить на этих данных специальный случай **распределения Вейбулла** с ${\gamma = 2, \alpha = {\sqrt 2} \sigma}$, т. е. **распределением Рэлея** (англ. "`Rayleigh distribution`"). Ошибка с более привычным пакетом `survival` происходит из-за включения в модель предикторов `acq_expense_sq` и `ret_expense_sq`, обладающих чрезвычайно большими значениями.
+
+В принципе, **Экспоненциальное распределение** тоже специальный случай **распределения Вейбулла** с ${\gamma = 1}$. Поскольку разработчики пакета [`VGAM`](http://cran.rstudio.com/web/packages/VGAM) с 2007 г. так и не смогли подготовить обещанную ими полноценную цензуированную версию регрессионную модель распределения Вейбулла, то нам придется ограничиться частным случаем распределения Вейбулла.
+
+```{r Check Weibull Distribution}
+# https://stats.stackexchange.com/questions/19866/how-to-fit-a-weibull-distribution-to-input-data-containing-zeroes
+foo <- function(theta, x)
+{
+  if (theta <= -min(x)) return(Inf);
+  f <- MASS::fitdistr(x+theta, 'weibull')
+  -2*f$loglik
+}
+
+x <- (filter(customerAcquisition, acquisition == 1)$duration - 
+        predict(Ch03.tb, newdata = filter(customerAcquisition, acquisition == 1), type = "response")) %>% 
+          as.vector
+
+set.seed(2018) 
+# Cullen & Fley Graph: Empirical Weibull Distribution
+fitdistrplus::descdist(x, boot = 500, discrete = FALSE)
+mtext("Weibull distribution of `filter(customerAcquisition, acquisition == 1)$duration - predict(Ch03.tb)`",
+      line = 0.5, cex =0.75)
+
+bar <- optimize(foo, lower=-min(x)+0.001, upper=-min(x)+10, x=x)
+
+library('fitdistrplus')
+(fitW <- fitdistrplus::fitdist(x+bar$minimum, 'weibull') )
+plot(fitW)
+fitdistrplus::gofstat(fitW)
+
+# https://stats.stackexchange.com/questions/19866/how-to-fit-a-weibull-distribution-to-input-data-containing-zeroes
+# # R-code for the Blischke-Scheuer method
+# fit_weibull <- function(x)
+# {
+#     xbar <- mean(x)
+#     varx <- var(x)
+#     f <- function(b){return(gamma(1+2/b)/gamma(1+1/b)^2 - 1 - varx/xbar^2)}
+#     bhat <- uniroot(f,c(0.02,50))$root
+#     ahat <- xbar/gamma(1+1/bhat)
+#     return(c(ahat,bhat))
+# }
+# 
+# (z <- fit_weibull(x + bar$minimum))
+```
+
+
+Наряду с модификацией авторской модели была построена классическая Тобит-модель (англ. "`Tobit model`"), которая представляет собой полноценно цензуированную модель с **нормальным распределением**. Кроме того, проверялась и *"наивная"* модель по средней продолжительности нецензуриванных фирм, сотрудничество в которыми длилось менее двух лет, которая равна `r sprintf("%.0f",mean(filter(customerAcquisition, acquisition == 1 & censor == 0)$duration))` дней. Заметим, что на странице 46 авторы описывают эту величину как 333 дней, а в листинге программы **SAS** на странице 56 уже как 327. 
+
+```{r Ch03: Error of Duration Models}
+# Accuracy measures for Censored Tobit 
+y <- filter(customerAcquisition, acquisition == 1)$duration
+y_hat <- predict(Ch03.tb, newdata = filter(customerAcquisition, acquisition == 1), type = "response") %>%  as.vector # if_else(fitted(Ch03.tb) > UpLimit, UpLimit, if_else(fitted(Ch03.tb) < 0, 0, fitted(Ch03.tb)))
+
+m <- forecast::accuracy(rep(mean(filter(customerAcquisition, acquisition == 1 & censor == 0)$duration), length(y)), y); attributes(m)$ dimnames[[1]] <- "    Naïve Model (Mean) Accuracy: "; m
+m <- forecast::accuracy(y_hat, y); attributes(m)$ dimnames[[1]] <- "      Censored Tobit's Accuracy: "; m
+
+# # Accuracy measures for Censored Normal Distribution AFT Model
+# y_hat <- if_else(fitted(Ch03.nr) > UpLimit, UpLimit, if_else(fitted(Ch03.nr) < 0, 0, fitted(Ch03.nr)))
+# 
+# m <- forecast::accuracy(y_hat, y); attributes(m)$ dimnames[[1]] <- "Censored Normal Model's Accuracy: "; m
+
+# Accuracy measures for Right-Censoring Rayleigh AFT Model
+y_hat <- if_else(fitted(Ch03.ry) > UpLimit, UpLimit, if_else(fitted(Ch03.ry) < 0, 0, fitted(Ch03.ry)))
+
+m <- forecast::accuracy(y_hat, y); attributes(m)$ dimnames[[1]] <- "Right-censored Model's Accuracy: "; m
+
+```
+
+Средняя абсолютная процентная ошибка ('MAPE') по *наивной* модели составила `r sprintf("%.1f", forecast::accuracy(rep(mean(filter(customerAcquisition, acquisition == 1 & censor == 0)$duration), length(y)), y)[, "MAPE"])`%, 
+
+что существенно выше, чем по *тобит-модели* (`r sprintf("%.1f", forecast::accuracy(fitted(Ch03.tb)[, 1], y)[, "MAPE"])`%) 
+
+и особенно по *модели с остатками по цензуированному Вейбуллу* (`r sprintf("%.1f", forecast::accuracy(y_hat, y)[, "MAPE"])`%).
+
+#### Weibull (AR version)
+
+Поскольку ряд предикторов в полученной *модели с остатками по цензуированному Вейбуллу* незначимы, то можно построить более надежную модели выживания (продолжительности сотрудничества с клиентами).
+
+```{r Ch03: Duration Improved }
+# Right-Censored Rayleigh Distribution (special case of Weibull distribution with the "shape" parameter gamma = 2)
+Extra = with(filter(customerAcquisition, acquisition == 1), list(rightcensored = (duration == UpLimit) ))
+
+(Ch03.RY <- VGAM::vglm(duration ~ acq_expense_sq + ret_expense + crossbuy + frequency + industry + revenue,
+                       family = cens.rayleigh, extra = Extra,
+                       data = filter(customerAcquisition, acquisition == 1))) %>%
+  summary
+
+# Accuracy measures for Right-Censoring Rayleigh AFT Model by AR
+y_hat <- y_hat <- if_else(fitted(Ch03.RY) > UpLimit, UpLimit, if_else(fitted(Ch03.RY) < 0, 0, fitted(Ch03.RY)))
+
+m <- forecast::accuracy(y_hat, y); attributes(m)$ dimnames[[1]] <- "Right-censored Model's Accuracy: "; m
+
+```
+
+И хотя у этой модели немного ниже точность прогнозирования, тем не менее она более надежна, так как вместо ранее примененных `r Ch03.ry@rank-1` предикторов оставлено только `r Ch03.RY@rank-1` значимых, а ошибка по MAPE увеличилась на менее, чем один процент.
+
+#### Kaplan–Meier Graphs
+
+```{r Ch03 : Kaplan–Meier Graphs, fig.cap = "Survival Probability Curves", out.width = "200%"}
+
+library('survival') # Survival Analysis routines (Surv objects, Kaplan-Meier curves, Cox and parametric AFT models)
+# library('AER') # Applied Econometrics with R for the book Christian Kleiber and Achim Zeileis (2008)
+# # Censored Tobit Model from 'AER' package weibull
+# (Ch03.ln <- AER::tobit(duration ~ ret_expense + crossbuy + frequency + industry + revenue, 
+#                  right = UpLimit, dist = 'weibull', data = filter(customerAcquisition, acquisition == 1))) %>%
+#   summary
+
+y_hat <- if_else(fitted(Ch03.ry) > UpLimit, UpLimit, fitted(Ch03.ry))
+
+# Kaplan–Meier Estimator of Survival Curves 
+Ch03.km <- survfit(Surv(time = duration, event = (censor == 0), type = "right") ~ 1,
+                    data = filter(customerAcquisition, acquisition == 1)) 
+
+plot(Ch03.km, xlab="Time in days", ylab="Функция выживания")
+
+lines(survfit(Surv(time = fitted(Ch03.tb), event = (fitted(Ch03.tb) != UpLimit), type = "right") ~ 1,
+                   data = filter(customerAcquisition, acquisition == 1)), conf.int = FALSE, col = "green")
+lines(survfit(Surv(time = y_hat, event = (y_hat != UpLimit), type = "right") ~ 1,
+                   data = filter(customerAcquisition, acquisition == 1)), conf.int = FALSE, col = "red")
+## Add legends
+legend(x = "bottomleft",
+       legend = c("Kaplan-Meier Estimator",
+            sprintf("Censored Tobit (MAPE= %.1f %%)", forecast::accuracy(fitted(Ch03.tb)[, 1], y)[, "MAPE"]),
+            sprintf("Right-Censored Weibull [gamma=2] (MAPE= %.1f %%)", forecast::accuracy(y_hat, y)[, "MAPE"])),
+       lwd = 2, bty = "n",
+       col = c("black", "green", "red"))
+```
+
+Сравнение на графике выживания показывает, то кривая, построенная моделью, проходит вблизи фактической кусочно-линейной функции для аппроксимации функции выживания **Каплана-Мейера** мало отклоняясь от этой эмпирической кривой.
+
+В некоторых случаях исследователи могут захотеть моделировать одновременно несколько показателей привлечения клиентов, например, количество вновь приобретенных клиентов и начальное количество заказа, а системы линейной регрессии могут выполнить такую задачу. Кроме того, возможно, что метрики привлечения, такие как количество клиентов, приобретенных посредством промоутеров или взаимодействие в интернете и прибыльность компании, коррелированы и разнонаправлены во времени, а 'VAR -а это подходящий метод моделирования для учета корреляционных и временных эффектов. Кроме того, исследователи могут захотеть смоделировать продолжительность сотрудничества со вновь приобретенными клиентами и определить последствия, которые могут иметь различные объясняющие переменные во до момента прекращения сотрудничества. Поскольку большинство данных о продолжительности содержат цензуированые наблюдения, регрессия *методом наименьших квадратов* обеспечивала бы предвзятые оценки. Классическим параметрическим методом для данных о выживании является модель времени ускоренного отказа (AFT), которая может быть оценена *методом максимального правдоподобия*.
+
+В моделировании длительности сотрудничества часто используются вариации модели времени ускоренного отказа, в зависимости от предположения о её теоретическом законе распределении остатков, таких как Вейбулла (в частности, экспоненциальное, Рэлея), Гумбела, гамма, лог-логистическое и лог-нормальное распределения. 
+
+### Как это использовать?
+
+Авторы полагают, что вывод модели весьма полезен для определения того, какого клиента как именно можно удержать фирма. Кроме того, результаты модели времени ускоренного отказа могут служить драйверами удержаний клиентов, какие факторы воздействуют на увеличение или уменьшение шансов на продолжение сотрудничества, которые полезны для менеджеров при принятии решений в будущих кампаниях по сохранению клиентов.
+
+Теперь можно узнать, как изменения в расходах на удержание, дополнительных услуг и частоты обращений,а также  изменения характеристик имеющихся клиентов могут либо увеличить, либо уменьшить вероятность завершения сотрудничества с потребителем. Эта информация может дать значительную информацию руководителям, которым поручено определить оптимальный объем ресурсов, которые необходимо потратить на удержание клиентов.
+
+## Эмпирический пример: доходность фирмы
+
+Последним этапом анализа привлечения потребителей является определение того, выгодны ли покупатели, которые были приобретены. Авторы также хотели знать, можем ли определить драйверы рентабельности клиента, чтобы увидеть, могут ли будущие усилия по приобретению помочь получить большее количество прибыльных клиентов. Поэтому в этом примере можно научиться:
+
+1. Определять драйверы доходности клиента.
+
+2. Рассчитывать предиктивную точность модели доходности клиентов.
+
+Информация, которая нам понадобится для этой модели, включает следующий список переменных для `r nrow(filter(customerAcquisition, acquisition == 1))` потенциальных клиентов, которые заключили договора с фирмой (`Acquisition == 1`):
+
+| Переменные      | Описание                                                                             |
+|:--------------- |:-------------------------------------------------------------------------------------|
+| **Зависимая переменная** |  |
+| Censor          | **1**, если клиент оставался в конце окна наблюдения, **0** в противном случае |
+| CLV             | Прогноз пожизненной ценности клиента. Это **0**, если клиента не было или уже ушел в отток ('000) |
+| **Предикторы**          |  |
+| Acq_Expense     | Долларовые расходы на маркетинг по привлечению клиента |
+| Acq_Expense_SQ  | Квадрат расходов на привлечение |
+| imr_censor или *Lambda* ($\lambda$) | Рассчитанное *обратное отношение Миллса* из модели привлечения клиента |
+| Ret_Expense     | Долларовые расходы на маркетинг по удержание клиента |
+| Ret_Expense_SQ  | Квадрат расходов на удержание |
+| First_Purchase  | Долларовая стоимость первой покупки (0, если клиент не был приобретен) |
+| Crossbuy        | Количество категорий товаров / услуг, приобретенных клиентом |
+| Frequency       | Количество покупок клиента во время окна наблюдения |
+| Frequency_SQ    | Квадрат количества покупок |
+| Industry        | **1**, если клиент в секторе **B2B**, **0** в противном случае, т. е. **B2C** |
+| Revenue         | Годовой доход от продаж компании (млн долл.) |
+| Employees       | Количество сотрудников в компании |
+
+В этом случае мы имеем две зависимые переменные. Одна зависимая переменная, называемая `Censor`, помогает нам отделять тех клиентов, которые все еще сотрудничают, и теми клиентами, которые уже покинули фирму. Вторая зависимая переменная называется `CLV` (англ. "`Customer Lifetime Value`") или Пожизненная финансовая ценность клиента. Для этого примера для вас был предсказан показатель CLV (в тысячах) для каждого из приобретенных клиентов. Поскольку CLV является перспективной мерой (т. Е. Измеряет ожидаемую будущую прибыльность клиента), единственными клиентами с оценкой CLV являются те, кто по-прежнему остается клиентами фирмы. Это клиенты, которые отвечают следующим двум критериям: они имеют значение 1 для приобретения и значение 1 для цензора. 
+
+Как и в случае с первоначальным объемом покупки, мы должны учитывать как вероятность того, что клиент по-прежнему является клиентом (`Censor`), так и ожидаемой будущей доходностью клиента (`CLV`). Для этого получим следующее уравнение:
+
+$$ \displaystyle \large E(Future \enspace Profitability) = P(Censor = 1) * E(CLV \enspace | \enspace Censor = 1)  \hspace{.5 in} [8] $$
+В этом случае мы также признаем, что нам придется учитывать только часть компанию, котоыре удасться привлечь из выборки и затем оценить модель в двухэтапной структуре моделирования. Опять же, подобно процессу моделирования  величины первоначального заказа, мы сначала моделируем `Censor` как *пробит*, используя все независимые переменные. Затем мы вычисляем коэффициенты обратного отношения Миллса для тех клиентов, у которых есть `Censor == 1`. Наконец, мы запускаем построение линейной регрессию с `CLV` *методом наименьших квадратов* в качестве зависимой переменной только для `r as.integer(customerAcquisition$clv > 0) %>% sum()` компаний, которые все еще являются клиентами. Мы используем все перечисленные независимые переменные и отношение обратных Миллсов ($\lambda$), которые объявлены зависимой переменной `imr_censor`.Таким образом, авторы получают следующие результаты:
+
+### Первый этап расчета CLV - вероятность дожития клиента {.tabset}
+
+#### Probit
+
+```{r Ch03 : Censor Probit}
+# Fit Probit Model for Censor by Authors
+Ch03.censor <- glm(factor(censor) ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + first_purchase +
+                   crossbuy + frequency + frequency_sq + industry + revenue + employees,
+                   data = filter(customerAcquisition, acquisition == 1), family = binomial(link = 'probit'))
+summary(Ch03.censor)
+writeLines(sprintf("-2 Log L of Intercept and Only Covariates: %.3f", -2 * logLik(Ch03.censor)[1]))
+writeLines(sprintf("                  AIC (smaller is better): %.3f", extractAIC(Ch03.censor)[2]))
+
+writeLines("\n Wald test of predictors")
+car::Anova(Ch03.censor, type="II", test="Wald")
+writeLines("\n Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03.censor) # Variance Inflation Factors - if vif() > 2 - feature has multicollinearity 
+
+writeLines("\n Censor Probit Model: Association of Predicted Probabilities and Observed Responses \n")
+prob <- predict(Ch03.censor, newdata = filter(customerAcquisition, acquisition == 1), type = "response") 
+caret::confusionMatrix(data = ifelse(prob > 0.5, "1", "0") %>% factor,
+                       reference = filter(customerAcquisition, acquisition == 1)$censor %>% factor,
+                       positive = "1", mode = "everything")
+```
+
+Как и в случае с пробит-моделью из начала главы, эту пробит-модель не вполне можно назвать удачной, ведь она содержит ряд незначимых предикторов, а значимые являются мультиколлинеарными между собой. Более того, при построении бинарного фактора `Censor` получено предупреждение "`glm.fit: возникли подогнанные вероятности 0 или 1`", поскольку наблюдается зависимая переменная, которая идеально разделяет на нули и единицы, т. е. обучение ведется на «идеальном или квази совершенном разбиении».
+
+#### Elastic-net
+
+Решением этой и других проблем является использование пенализированной регрессии (англ. "`Penalized Regression`"), которая обеспечивает регуляризация, позволяющая находить приближённое решение некорректно поставленных задач. Загрузите пакет [`glmnet`](http://cran.rstudio.com/web/packages/glmnet) в **R**, способного устранить эту проблему и *мультиколлиниарность* нескольких  предикторов посредством регуляризацией по Lasso и Ridge .
+
+```{r Ch03 : Censor - Lasso and Ridge (Elastic-net) regularized Generalized Linear Model }
+# Fit Lasso and Ridge (Elastic-net) regularized Generalized Linear Model for Censor (Improved)
+uno = 'logit'
+set.seed(2018)
+Ch03cs.AR <- train(factor(censor) ~ acq_expense_sq + ret_expense + crossbuy + frequency + industry + revenue,
+                  data = filter(customerAcquisition, acquisition == 1), metric = 'Kappa',
+                  tuneGrid = expand.grid(.alpha = seq(0, 1, length=11),
+                  ## The elasticnet mixing parameter: alpha=1 is the lasso penalty, and alpha=0 the ridge penalty
+                                         .lambda = seq(0.001, 2, length=11)),
+                  ##  LASSO (Least Absolute Shrinkage and Selection Operator)
+                  method = "glmnet", family = "binomial", type.logistic="modified.Newton")#,
+                  # trControl = trainControl(method = "none", number = 1))
+
+predict(Ch03cs.AR$finalModel, newx = NULL, type = "coefficients", s = Ch03cs.AR$finalModel$tuneValue$lambda)
+writeLines("\n Variable Importance for Model \n")
+caret::varImp(Ch03cs.AR) %>% .$importance %>% print.AsIs()
+
+# Create the scatter plots Logit versus model predictors
+prob <- predict(Ch03cs.AR, newdata =  filter(customerAcquisition, acquisition == 1), type = "prob") %>% .[, "1"]
+predictors <- Ch03cs.AR$coefnames # Ch03cs.AR$finalModel$xNames
+Ch03cs.AR$trainingData %>%
+  dplyr::select(one_of(predictors)) %>%
+    mutate(logit = log(prob / (1 - prob))) %>%
+      gather(key = "predictors", value = "predictor.value", -logit) %>%
+        ggplot(aes(predictor.value, logit))+
+          geom_point(size = 0.5, alpha = 0.5) +
+          geom_smooth(method = "loess") +
+          facet_wrap(~ predictors, scales = "free_x") +
+          ylab(stringr::str_to_title(uno))
+
+writeLines("\n Elastic-net Model: Association of Predicted Probabilities and Observed Responses \n")
+caret::confusionMatrix(data = predict(Ch03cs.AR, newdata = filter(customerAcquisition, acquisition == 1)),
+                       reference = filter(customerAcquisition, acquisition == 1)$censor %>% factor,
+                       positive = "1", mode = "everything")
+
+qplot(`Observed Classes`, `Predicted Classes`, 
+      data=bind_cols(`Observed Classes`= filter(customerAcquisition, acquisition == 1)$censor %>% factor,
+                     `Predicted Classes` = predict(Ch03cs.AR, filter(customerAcquisition, acquisition == 1))),  
+      colour= `Observed Classes`, geom = c("boxplot", "jitter"),
+      main = "Predicted Classes vs. Observed Classes", xlab = "Observed Classes", ylab = "Predicted Classes")
+
+```
+
+Качество классификационной модели после отбрасывания нескольких незначимых и малозначащих предикторов (`acq_expense`, `ret_expense_sq`, `first_purchase`, `frequency_sq` & `employees`) осталось весьма высоким, но после регуляризации можно ожидать, что это идеальное разбиение - это не просто побочный продукт данной выборки, но может реально содержаться в генеральной совокупности.
+
+### Второй этап расчета CLV - *Пожизненная финансовая ценность клиента*
+
+Тем не менее авторы используют предсказания своей *пробит-модели* как отдельный предиктор `imr_censor` ($\lambda$) на втором этапе моделирования *Пожизненная финансовая ценность клиента* (CLV), когда обращаются в линейной регрессии. Эту регрессию строят методом наименьших квадратов на усеченной выборке, содержащей оставшихся (цензуированных) клиентов, т. е. `clv > 0`.
+
+```{r Ch03 : CLV Regression}
+# Fit Linear Regression Model for Customer Lifetime Value by Authors
+
+# SAS Code: imr_censor = pdf(’Normal’,xb_censor)/probnorm(xb_censor);
+
+# customerAcquisition <- customerAcquisition %>% 
+#   mutate(imr_censor = predict(Ch03cs.AR, newdata =  customerAcquisition, type = "prob") %>% .[, "1"]) # Logit
+xbeta <- predict(Ch03.censor, newdata = customerAcquisition, type = "link")
+customerAcquisition <- customerAcquisition %>%
+  mutate(imr_censor = dnorm(xbeta) / pnorm(xbeta)) #  Cumulative normal pdf
+    
+(Ch03.clv <- lm(clv ~ acq_expense + acq_expense_sq + ret_expense + ret_expense_sq + first_purchase + crossbuy +
+                      frequency + frequency_sq + industry + revenue + employees + imr_censor,
+                data = filter(customerAcquisition, clv > 0) )) %>%
+  summary
+
+writeLines("Variance Inflation Factors - if vif() > 2  - feature has multicollinearity with others")
+car::vif(Ch03.clv) # Variance Inflation Factors - if vif() > 2 - feature has multicollinearity 
+
+```
+
+Какие выводы могут получить авторы из этих результатов? Мы видим, что коэффициент `imr_censor` ($\lambda$) является положительным, но незначимым предиктором в модели CLV. Таким образом, авторы не могут интерпретировать это как означающее, что проблема выбора не существует, только маловероятно, что остатки уравнения бинарного выбора `Censor` не коррелируют с остатками уравнения линейной регрессии. Мы также видим, что за исключением `Employees`, остальные предикторы в модели CLV значимы при *p < 0.05*. Это означает, что мы обнаружили множество ключевых драйверов CLV для этого набора клиентов. 
+
+Как только мы предсказали значение CLV для каждой из перспективных компаний, следует сравнить это с фактическим значением из базы данных. Мы сравниваем значения `CLV`, где `Censor == 1`, то есть клиенты, которые все еще активные. вычислим среднее абсолютное отклонение (MAD или MAE) и среднюю абсолютную процентную погрешность (MAPE).
+
+```{r Ch03 : Error of Model CLV}
+# Computing the Mean Absolute Deviation (MAD) and Mean Absolute Percent Error (MAPE)
+with(filter(customerAcquisition, censor == 1), {
+  pred_clv <- predict(Ch03.clv) #, newdata = filter(customerAcquisition, censor == 1))
+  # mad = mean(abs(pred_clv - clv));
+  writeLines(sprintf("Mean Absolute Deviation (MAD): %.3f тыс. долл.", mean(abs(clv - pred_clv))))
+  
+  # mape = mean(abs(clv - pred_clv)/clv);
+  writeLines(sprintf("Mean Absolute Percent Error (MAPE): %.3f %%", mean(abs(clv - pred_clv) / clv) * 100))
+  
+  # mad1 = mean(abs(clv - mean(clv));
+  mad1 <- mean(abs(clv - mean(clv)))
+  writeLines(sprintf("Naive Mean Absolute Deviation (MAD1): %.3f тыс. долл.", mad1))
+  
+  # mape1 = mean(abs(clv - mean(clv))/clv);
+  mape1 <- mean(abs(clv - mean(clv)) / clv) * 100
+  writeLines(sprintf("Naive Mean Absolute Percent Error (MAPE1): %.3f %%", mape1))
+  })
+```
+
+На этих данных авторы нашли, что MAD составляет `r sprintf("%.2f", mean(abs(filter(customerAcquisition, censor == 1) %>% .$clv - predict(Ch03.clv))))` (или `r sprintf("%.0f", mean(abs(filter(customerAcquisition, censor == 1) %>% .$clv - predict(Ch03.clv)))*1000)` долл. США), а MAPE - `r sprintf("%.2f", mean(abs(filter(customerAcquisition, censor == 1) %>% .$clv - predict(Ch03.clv)) / filter(customerAcquisition, censor == 1) %>% .$clv) * 100)`%. Для *наивной* тестовой модели авторы используют среднее значение `CLV` по цензуированным клиентам `r sprintf("%.3f", (filter(customerAcquisition, censor == 1) %>% .$clv %>%  mean))` тыс. долл. как прогнозируемое значение для каждого остающегося клиента. В этом случае получаем MAD1 - `r sprintf("%.0f", abs((filter(customerAcquisition, censor == 1) %>% .$clv %>%  mean) - (filter(customerAcquisition, censor == 1) %>% .$clv)) %>% mean * 1000)` долл. США и MAPE1  `r sprintf("%.2f", abs((filter(customerAcquisition, censor == 1) %>% .$clv %>%  mean) - (filter(customerAcquisition, censor == 1) %>% .$clv)) %>% mean / (filter(customerAcquisition, censor == 1) %>% .$clv %>%  mean) * 100)`%. Мы видим, что модель CLV от авторов обеспечивает лучшее предсказание CLV, чем *наивная* усредненная модель. Это показывает, что определение драйверов CLV поможет фирме глубже понять, какие клиенты, скорее всего, станут прибыльными в будущем.
+
+### Как это использовать?
+
+Авторы находят, что `Acq_Expense` и `Ret_Expense` положительны связаны с *уменьшающейся доходностью*, что отмечено положительным коэффициентом на этих двух переменных и и отрицательными коэффициентами на их квадраты. Это говорит о том, что чем больше тратятся усилий, связанные с приобретением и удержанием, до предела, тем выше ожидаемая финансовая ценность жизни клиента, т. е. CLV. Для `First_Purchase` видно, что существует положительный коэффициент, предполагающий, что чем выше первоначальная сумма покупки, тем выше ожидаемая стоимость жизни клиента. Для `Crossbuy` наблюдается, что существует положительный коэффициент, предполагающий, что чем больше категорий продуктов приобретает покупатель, тем вполне логично выше ожидаемая стоимость жизни. Авторы замечают, что частота покупок `Frequency` положительна с уменьшающейся доходностью, что отмечено положительным коэффициентом на этом признаке и отрицательным коэффициентом на квадрат.
+
+Это говорит о том, что клиенты, которые покупают последовательно с умеренной скоростью в течение срока их сотрудничества, скорее всего, имеют наивысшую ценность жизни. Затем через термины описания клиентов обнаруживается, что клиенты, которые являются **B2B** (`Industry`) и клиентами с более высоким уровнем дохода (`Revenue`), с большей вероятностью имеют более высокую жизненную ценность (`CLV`), чем клиенты, которые не входят в отрасль B2B и имеют более низкий доход.
+
+Должен признаться, что крупнейшие вендоры уже прошли эти этапы анализа клиентов и подготовили преднастроенные модели для них. Примером в области телекоммуникации служит [ Oracle Communications Data Model Data Mining Models](https://docs.oracle.com/cd/E16762_01/doc/doc.112/e15886/data_mining_cdm.htm) и связанная с ним отчетность [Oracle Communications Data Model Sample Reports](https://docs.oracle.com/cd/E16762_01/doc/doc.112/e15886/sample_reports.htm).
+
+```{r The End of session}
+
+devtools::session_info()
+
+```
+
+## Выводы по главе 3
+
+Цель этой главы состояла в том, чтобы изучить текущие модели привлечения клиентов и представить некоторые эмпирические примеры того, как фирмы могут применять эти знания. Приобретение клиентов является первым ключевым шагом в процессе CRM. Авторы также показали, что когда фирмы способны участвовать в оптимальном выборе перспективных потребителей, понимая движущие силы ведущие к клиентам и «правильного» объема усилий по их подключению к сотрудничеству, осознавая взаимосвязь между маркетинговыми расходами и стоимостью, которую может принести клиент. Получаемый в ходе этого процесса результат может обеспечить существенную рентабельность клиентов и как следствие значительную прибыльность фирмы.

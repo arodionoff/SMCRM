@@ -1,0 +1,69 @@
+---
+title: "Statistical Methods in Customer Relationship Management. Table of Contents"
+subtitle: "Statistical analysis in R by SAS examples in the book by Kumar V. and Petersen Andrew J."
+author: "Alexander Rodionov"
+date: "30 мая 2018 г."
+output: 
+  html_document:
+    highlight: tango 
+    theme: readable
+    code_folding: hide
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 6.3
+    toc: yes
+    toc_float: no
+    number_sections: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Статистические методы для Системы управления взаимоотношениями с клиентами
+
+Проведение статистического анализа в **R** по примерам и материалам из книги Kumar V., Petersen Andrew J. "Statistical Methods in Customer Relationship Management".
+
+Компании инвестируют миллионы долларов в системы и стратегии управления взаимоотношениями с клиентами (CRM). Основными задачами этих систем являются:
+
+* (а) получение прибыльных клиентов, 
+
+* (б) сохранение прибыльных клиентов, 
+
+* (в) предотвращение перехода прибыльных клиентов на конкуренцию и
+
+* (г) возврат «потерянных» прибыльных клиентов. 
+
+Эти четыре цели в совокупности приводят к повышению прибыльности организации. Хотя большинство фирм признают преимущества создания **CRM**-систем и стратегий, не все фирмы добились успеха в реализации CRM. Итак, почему они потерпели неудачу? Читайте ['Statistical Methods in Customer Relationship Management'](http://www.drvkumar.com/statistical-methods-in-customer-relationship-management).
+
+Благодаря данным, помещенным бельгийским исследователем Tobias Verbeke, в пакете [`SMCRM`](http://cran.rstudio.com/web/packages/SMCRM) мы можем воспроизвести эти расчеты в среде **R**. Подобные примеры доступны в структуированной базе пакетов, функций, графиков и наборов данных - [`R Graphical Manual`](http://www.imsbio.co.jp/RGM).
+
+## Оглавление
+
+Глава 1. Управление взаимоотношениями с клиентами
+
+Глава 2. CRM в действии
+
+Глава 3. [Привлечение потребителей](https://rpubs.com/A_Rodionoff/SMCRM_Ch03)
+
+Глава 4. [Удержание клиентов](https://rpubs.com/A_Rodionoff/SMCRM_Ch04)
+
+Глава 5. [Балансирование между привлечением и удержанием](https://rpubs.com/A_Rodionoff/SMCRM_Ch05)
+
+Глава 6. [Отток клиентов](https://rpubs.com/A_Rodionoff/SMCRM_Ch06)
+
+Глава 7. [Возвращение клиентов](https://rpubs.com/A_Rodionoff/SMCRM_Ch07)
+
+Глава 8. Внедрение CRM-моделей
+
+Глава 9. Будущее CRM
+
+<!-- Chapter 1. Customer relationship management -->
+<!-- Chapter 2. CRM in action -->
+<!-- Chapter 3. -->
+<!-- Chapter 4. Customer retention -->
+<!-- Chapter 5. Balancing acquisition and retention -->
+<!-- Chapter 6. Customer churn -->
+<!-- Chapter 7. Customer win-back -->
+<!-- Chapter 8. Implementing CRM models -->
+<!-- Chapter 9. The future of CRM -->
